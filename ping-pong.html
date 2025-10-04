@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>모바일 가로 2인용 탁구 (Pong)</title>
+<style>
+  html,body { height:100%; margin:0; background:#fff; font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; -webkit-tap-highlight-color: transparent; }
+  #wrap { width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative; }
+  canvas { background:#fff; border-radius:8px; touch-action: none; }
+  .ui { position: absolute; top:12px; left:50%; transform:translateX(-50%); color:#333; text-align:center; user-select:none; pointer-events:none; }
+  .scores { font-size:20px; font-weight:600; letter-spacing:6px; }
+  #controlBtn { position: absolute; left:50%; bottom:20px; transform:translateX(-50%); background: rgba(0,0,0,0.1); color:#333; border:1px solid rgba(0,0,0,0.2); padding:10px 18px; border-radius:8px; cursor:pointer; }
+  @media (orientation:portrait) {
+    .portrait-warning { position: absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#333; background:rgba(255,255,255,0.8); font-size:18px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+  <div class="ui" id="uiTop">
+    <div class="scores" id="scoreText">0 ┃ 0</div>
+  </div>
+  <button id="controlBtn">시작</button>
+  <div class="portrait-warning" id="portraitWarning" style="display:none;">
+    가로 모드에서 플레이하세요 ↔️
+  </div>
+</div>
+
+<script>
+(() => {
+  const WIN_SCORE = 7;
+  const PADDLE_HEIGHT_RATIO = 0.18;
+  const PADDLE_WIDTH_RATIO = 0.02;
+  const BALL_RADIUS_RATIO = 0.018;
+  const INITIAL_BALL_SPEED = 0.6;
+  const SPEED_INCREASE = 1.06;
+  const MAX_BALL_ANGLE = Math.PI / 3;
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const uiScore = document.getElementById('scoreText');
+  const controlBtn = document.getElementById('controlBtn');
+  const portraitWarning = document.getElementById('portraitWarning');
+
+  let width = 1000, height = 500;
+  let devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+
+  let leftPaddle, rightPaddle, ball;
+  let lastTime = performance.now();
+  let leftScore=0, rightScore=0;
+  let running=false, gameOver=false;
+
+  function Paddle(x,w,h,color){
+    this.x=x; this.w=w; this.h=h; this.y=(height-h)/2; this.targetY=this.y; this.speed=200; this.color=color;
+  }
+  function Ball(x,y,r){ this.x=x; this.y=y; this.r=r; this.vx=0; this.vy=0; }
+
+  function resizeCanvas(){
+    const availW = window.innerWidth;
+    const availH = window.innerHeight;
+    canvas.style.width = availW + 'px';
+    canvas.style.height = availH + 'px';
+    width = Math.max(320, Math.floor(availW));
+    height = Math.max(240, Math.floor(availH));
+    devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(width * devicePixelRatio);
+    canvas.height = Math.floor(height * devicePixelRatio);
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+
+    if(window.innerHeight>window.innerWidth) portraitWarning.style.display='flex';
+    else portraitWarning.style.display='none';
+
+    if(leftPaddle && rightPaddle){
+      const ph = Math.max(30,height*PADDLE_HEIGHT_RATIO);
+      const pw = Math.max(8,width*PADDLE_WIDTH_RATIO);
+      leftPaddle.h = rightPaddle.h = ph;
+      leftPaddle.w = rightPaddle.w = pw;
+      leftPaddle.x = 8;
+      rightPaddle.x = width - pw - 8;
+      leftPaddle.targetY = clamp(leftPaddle.y,8,height-leftPaddle.h-8);
+      rightPaddle.targetY = clamp(rightPaddle.y,8,height-rightPaddle.h-8);
+    }
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  function initEntities(){
+    const ph = Math.max(30,height*PADDLE_HEIGHT_RATIO);
+    const pw = Math.max(8,width*PADDLE_WIDTH_RATIO);
+    leftPaddle = new Paddle(8,pw,ph,'red');
+    rightPaddle = new Paddle(width - pw - 8,pw,ph,'blue');
+    const br = Math.max(6,width*BALL_RADIUS_RATIO);
+    ball = new Ball(width/2,height/2,br);
+    resetBall(true);
+  }
+
+  function resetBall(serveToLeft){
+    ball.x=width/2; ball.y=height/2;
+    const baseSpeed = Math.max(200,width*INITIAL_BALL_SPEED);
+    const angle = (Math.random()*0.6-0.3);
+    const dir = serveToLeft?-1:1;
+    ball.vx = dir*Math.cos(angle)*baseSpeed;
+    ball.vy = Math.sin(angle)*baseSpeed;
+  }
+
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+  // 입력 처리
+  const activeTouches={};
+  function getSideForX(x){ return x<width/2?'left':'right'; }
+  canvas.addEventListener('touchstart', ev=>{
+    ev.preventDefault();
+    for(const t of ev.changedTouches){
+      const rect=canvas.getBoundingClientRect();
+      const x=(t.clientX-rect.left)*(canvas.width/rect.width)/devicePixelRatio;
+      const y=(t.clientY-rect.top)*(canvas.height/rect.height)/devicePixelRatio;
+      const side=getSideForX(x);
+      activeTouches[t.identifier]={side,lastY:y};
+      if(side==='left') leftPaddle.targetY=y-leftPaddle.h/2;
+      else rightPaddle.targetY=y-rightPaddle.h/2;
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchmove', ev=>{
+    ev.preventDefault();
+    for(const t of ev.changedTouches){
+      const rect=canvas.getBoundingClientRect();
+      const y=(t.clientY-rect.top)*(canvas.height/rect.height)/devicePixelRatio;
+      const info=activeTouches[t.identifier]; if(!info) continue;
+      if(info.side==='left') leftPaddle.targetY=y-leftPaddle.h/2;
+      else rightPaddle.targetY=y-rightPaddle.h/2;
+      info.lastY=y;
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchend', ev=>{ for(const t of ev.changedTouches) delete activeTouches[t.identifier]; }, {passive:false});
+
+  let mouseDown=false, mouseSide=null;
+  canvas.addEventListener('mousedown', ev=>{
+    mouseDown=true;
+    const rect=canvas.getBoundingClientRect();
+    const x=(ev.clientX-rect.left)*(canvas.width/rect.width)/devicePixelRatio;
+    const y=(ev.clientY-rect.top)*(canvas.height/rect.height)/devicePixelRatio;
+    mouseSide=getSideForX(x);
+    if(mouseSide==='left') leftPaddle.targetY=y-leftPaddle.h/2;
+    else rightPaddle.targetY=y-rightPaddle.h/2;
+  });
+  window.addEventListener('mousemove', ev=>{
+    if(!mouseDown) return;
+    const rect=canvas.getBoundingClientRect();
+    const y=(ev.clientY-rect.top)*(canvas.height/rect.height)/devicePixelRatio;
+    if(mouseSide==='left') leftPaddle.targetY=y-leftPaddle.h/2;
+    else rightPaddle.targetY=y-rightPaddle.h/2;
+  });
+  window.addEventListener('mouseup', ()=>{ mouseDown=false; mouseSide=null; });
+
+  const keys={};
+  window.addEventListener('keydown', e=>{ keys[e.key]=true; });
+  window.addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+  controlBtn.addEventListener('click', ()=>{
+    if(!running){
+      running=true;
+      controlBtn.textContent='정지';
+      if(gameOver){ leftScore=0; rightScore=0; gameOver=false; resetBall(Math.random()<0.5); uiScore.textContent=`${leftScore} ┃ ${rightScore}`; }
+    } else {
+      running=false;
+      controlBtn.textContent='시작';
+    }
+  });
+
+  function update(dt){
+    if(!running || gameOver) return;
+    if(keys['w']||keys['W']) leftPaddle.targetY-=leftPaddle.speed*dt;
+    if(keys['s']||keys['S']) leftPaddle.targetY+=leftPaddle.speed*dt;
+    if(keys['ArrowUp']) rightPaddle.targetY-=rightPaddle.speed*dt;
+    if(keys['ArrowDown']) rightPaddle.targetY+=rightPaddle.speed*dt;
+
+    const lerpFactor=Math.min(1,20*dt);
+    leftPaddle.y+=(leftPaddle.targetY-leftPaddle.y)*lerpFactor;
+    rightPaddle.y+=(rightPaddle.targetY-rightPaddle.y)*lerpFactor;
+    leftPaddle.y=clamp(leftPaddle.y,8,height-leftPaddle.h-8);
+    rightPaddle.y=clamp(rightPaddle.y,8,height-rightPaddle.h-8);
+
+    ball.x+=ball.vx*dt; ball.y+=ball.vy*dt;
+    if(ball.y-ball.r<=0){ ball.y=ball.r; ball.vy=Math.abs(ball.vy); }
+    else if(ball.y+ball.r>=height){ ball.y=height-ball.r; ball.vy=-Math.abs(ball.vy); }
+
+    if(ball.x-ball.r<=leftPaddle.x+leftPaddle.w){
+      if(ball.y>=leftPaddle.y && ball.y<=leftPaddle.y+leftPaddle.h){ ball.x=leftPaddle.x+leftPaddle.w+ball.r; reflectFromPaddle(leftPaddle); }
+      else if(ball.x-ball.r<0){ rightScore++; uiScore.textContent=`${leftScore} ┃ ${rightScore}`; checkWin(); resetBall(true); }
+    }
+    if(ball.x+ball.r>=rightPaddle.x){
+      if(ball.y>=rightPaddle.y && ball.y<=rightPaddle.y+rightPaddle.h){ ball.x=rightPaddle.x-ball.r; reflectFromPaddle(rightPaddle); }
+      else if(ball.x+ball.r>width){ leftScore++; uiScore.textContent=`${leftScore} ┃ ${rightScore}`; checkWin(); resetBall(false); }
+    }
+  }
+
+  function reflectFromPaddle(paddle){
+    const relativeIntersectY=(paddle.y+paddle.h/2)-ball.y;
+    const normalized=relativeIntersectY/(paddle.h/2);
+    const bounceAngle=normalized*MAX_BALL_ANGLE;
+    const speed=Math.hypot(ball.vx,ball.vy)*SPEED_INCREASE;
+    const dir=(paddle.x<width/2)?1:-1;
+    ball.vx=dir*Math.cos(bounceAngle)*speed;
+    ball.vy=-Math.sin(bounceAngle)*speed;
+    const maxSpeed=Math.max(width*2.2,2000);
+    const minSpeed=Math.max(width*0.35,150);
+    const curSpeed=Math.hypot(ball.vx,ball.vy);
+    const clampedSpeed=clamp(curSpeed,minSpeed,maxSpeed);
+    if(curSpeed!==0){ ball.vx=ball.vx/curSpeed*clampedSpeed; ball.vy=ball.vy/curSpeed*clampedSpeed; }
+  }
+
+  function checkWin(){ 
+    if(leftScore>=WIN_SCORE||rightScore>=WIN_SCORE){ 
+      gameOver=true; running=false; controlBtn.textContent='시작'; 
+    } 
+  }
+
+  function draw(){
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,width,height);
+    ctx.fillStyle='#888';
+    const midW=6; const dashH=18;
+    for(let y=12;y<height;y+=dashH*1.6) ctx.fillRect((width-midW)/2,y,midW,dashH);
+    ctx.fillStyle=leftPaddle.color; roundRect(ctx,leftPaddle.x,leftPaddle.y,leftPaddle.w,leftPaddle.h,6);
+    ctx.fillStyle=rightPaddle.color; roundRect(ctx,rightPaddle.x,rightPaddle.y,rightPaddle.w,rightPaddle.h,6);
+    ctx.beginPath(); ctx.fillStyle='#000'; ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2); ctx.fill();
+  }
+
+  function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath(); ctx.fill(); }
+
+  function step(now){ const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); draw(); requestAnimationFrame(step); }
+
+  function start(){ resizeCanvas(); initEntities(); lastTime=performance.now(); requestAnimationFrame(step); }
+  start();
+})();
+</script>
+</body>
+</html>
