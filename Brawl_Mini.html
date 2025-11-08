@@ -39,7 +39,6 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// 📱 화면 크기에 맞춰 캔버스 자동 조정
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -47,7 +46,6 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// 객체 초기화
 const player = { x: canvas.width / 2, y: canvas.height / 2, size: 20, color: "#4f8cff", hp: 100, bullets: [] };
 const enemy = { 
   x: canvas.width / 4, 
@@ -58,30 +56,40 @@ const enemy = {
   bullets: [], 
   hp: 50, alive: true 
 };
-const keys = {};
-let touch = null;
 
-// 키보드 조작
+const keys = {};
+let joystick = null;
+let moveDir = {x:0,y:0};
+
+// 키보드 이동
 document.addEventListener("keydown", e => keys[e.key] = true);
 document.addEventListener("keyup", e => keys[e.key] = false);
 
-// 터치 / 클릭 조작
-canvas.addEventListener("click", e => fireBullet(e.clientX, e.clientY));
+// 터치 조작 (왼쪽: 이동 / 오른쪽: 공격)
 canvas.addEventListener("touchstart", e => {
-  if (e.touches.length === 1) fireBullet(e.touches[0].clientX, e.touches[0].clientY);
-  else touch = e.touches[0];
-});
-canvas.addEventListener("touchmove", e => {
   const t = e.touches[0];
-  if (touch) {
-    const dx = t.clientX - touch.clientX;
-    const dy = t.clientY - touch.clientY;
-    player.x += dx * 0.25;
-    player.y += dy * 0.25;
-    touch = t;
+  if (t.clientX < window.innerWidth / 2) {
+    joystick = {startX: t.clientX, startY: t.clientY};
+  } else {
+    fireBullet(t.clientX, t.clientY);
   }
 });
-canvas.addEventListener("touchend", () => touch = null);
+canvas.addEventListener("touchmove", e => {
+  if (joystick) {
+    const t = e.touches[0];
+    const dx = t.clientX - joystick.startX;
+    const dy = t.clientY - joystick.startY;
+    const len = Math.hypot(dx, dy);
+    if (len > 0) {
+      moveDir.x = dx / len;
+      moveDir.y = dy / len;
+    }
+  }
+});
+canvas.addEventListener("touchend", e => {
+  joystick = null;
+  moveDir = {x:0,y:0};
+});
 
 function fireBullet(x, y) {
   const rect = canvas.getBoundingClientRect();
@@ -96,7 +104,6 @@ function fireBullet(x, y) {
   });
 }
 
-// AI 자동 공격
 setInterval(() => {
   if (!enemy.alive) return;
   const dx = player.x - enemy.x;
@@ -111,15 +118,19 @@ setInterval(() => {
 }, 1200);
 
 function update() {
-  const speed = Math.max(canvas.width, canvas.height) * 0.004; // 크기에 따라 자동조정
+  const speed = Math.max(canvas.width, canvas.height) * 0.004;
 
-  // 플레이어 이동
+  // 키보드 이동
   if (keys["ArrowUp"]) player.y -= speed;
   if (keys["ArrowDown"]) player.y += speed;
   if (keys["ArrowLeft"]) player.x -= speed;
   if (keys["ArrowRight"]) player.x += speed;
 
-  // AI 이동
+  // 조이스틱 이동
+  player.x += moveDir.x * speed;
+  player.y += moveDir.y * speed;
+
+  // 적 이동 (랜덤)
   if (enemy.alive) {
     if (Math.random() < 0.02) enemy.dirX *= -1;
     if (Math.random() < 0.02) enemy.dirY *= -1;
@@ -158,7 +169,6 @@ function moveBullets(bullets) {
 }
 
 function checkHits() {
-  // 플레이어 총알 → 적
   for (let i = player.bullets.length - 1; i >= 0; i--) {
     const b = player.bullets[i];
     if (enemy.alive && dist(b.x, b.y, enemy.x, enemy.y) < enemy.size) {
@@ -173,7 +183,6 @@ function checkHits() {
     }
   }
 
-  // 적 총알 → 플레이어
   for (let i = enemy.bullets.length - 1; i >= 0; i--) {
     const b = enemy.bullets[i];
     if (dist(b.x, b.y, player.x, player.y) < player.size) {
@@ -203,7 +212,6 @@ function draw() {
     ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
     ctx.fill();
 
-    // HP바
     ctx.fillStyle = "#fff";
     ctx.fillRect(enemy.x - 20, enemy.y - 30, 40, 6);
     ctx.fillStyle = "#f00";
