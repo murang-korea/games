@@ -3,84 +3,188 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>익명 2인용 FPS</title>
+<title>Mini Brawl</title>
 <style>
-body,html{margin:0;padding:0;overflow:hidden;background:#222}
-#gameArea{position:relative;width:100vw;height:100vh;background:#333}
-.player{position:absolute;width:30px;height:30px;border-radius:50%;text-align:center;color:white;font-size:0.8rem;line-height:30px;}
-#me{background:blue;}
-.other{background:red;}
+html, body {
+  margin: 0; padding: 0; overflow: hidden;
+  background: #181818; touch-action: none;
+}
+#gameArea {
+  position: relative;
+  width: 100vw; height: 100vh;
+  background: radial-gradient(circle at center, #222 0%, #111 100%);
+  overflow: hidden;
+}
+.player {
+  position: absolute;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  text-align: center; line-height: 40px;
+  font-weight: bold; color: white;
+}
+.hpbar {
+  position: absolute;
+  top: -6px; left: 0;
+  width: 100%; height: 5px;
+  background: red; border-radius: 3px;
+}
+.bullet {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: yellow;
+}
+#joystick {
+  position: absolute;
+  left: 40px; bottom: 40px;
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  touch-action: none;
+}
+#stick {
+  position: absolute;
+  left: 40px; top: 40px;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.6);
+}
 </style>
 </head>
 <body>
 <div id="gameArea"></div>
+<div id="joystick"><div id="stick"></div></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
-// --- Supabase 연결 ---
 const SUPABASE_URL = "https://wtifzpbzjkyfosffamrx.supabase.co";
-const SUPABASE_KEY = "YOUR_ANON_KEY"; // 본인 anon key로 교체
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const SUPABASE_KEY = "YOUR_ANON_KEY"; // 여기에 네 키 넣어
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// --- 익명 유저 ---
-let me = { username: prompt("닉네임 입력:"), x:50, y:50 };
-let players = {}; // 다른 플레이어 정보
+let username = "플레이어" + Math.floor(Math.random()*999);
+let me = { username, x: 300, y: 300, hp: 100, color: randomColor() };
+let others = {}, bullets = {};
+const area = document.getElementById("gameArea");
 
-const gameArea = document.getElementById("gameArea");
+// 플레이어 생성
+function createPlayerEl(p) {
+  const el = document.createElement("div");
+  el.className = "player";
+  el.style.background = p.color;
+  el.innerText = p.username;
+  const hp = document.createElement("div");
+  hp.className = "hpbar";
+  el.appendChild(hp);
+  area.appendChild(el);
+  return el;
+}
+const meEl = createPlayerEl(me);
 
-// 내 캐릭터 생성
-const myEl = document.createElement("div");
-myEl.id = "me";
-myEl.className = "player";
-myEl.innerText = me.username;
-gameArea.appendChild(myEl);
-
-// 렌더링 함수
+// 렌더
 function render() {
-  myEl.style.left = me.x + "px";
-  myEl.style.top = me.y + "px";
-
-  for(let u in players){
-    if(u===me.username) continue;
-    let p = players[u];
-    if(!p.el){
-      p.el = document.createElement("div");
-      p.el.className = "player other";
-      p.el.innerText = p.username;
-      gameArea.appendChild(p.el);
-    }
+  meEl.style.left = me.x + "px";
+  meEl.style.top = me.y + "px";
+  for (let u in others) {
+    let p = others[u];
+    if (!p.el) p.el = createPlayerEl(p);
     p.el.style.left = p.x + "px";
     p.el.style.top = p.y + "px";
+    p.el.querySelector(".hpbar").style.width = p.hp + "%";
+  }
+  for (let id in bullets) {
+    let b = bullets[id];
+    if (!b.el) {
+      b.el = document.createElement("div");
+      b.el.className = "bullet";
+      area.appendChild(b.el);
+    }
+    b.el.style.left = b.x + "px";
+    b.el.style.top = b.y + "px";
   }
 }
 
-// 키 이동 처리 (WASD)
-document.addEventListener("keydown", e=>{
-  const step = 5;
-  if(e.key==="w") me.y=Math.max(0, me.y-step);
-  if(e.key==="s") me.y=Math.min(window.innerHeight-30, me.y+step);
-  if(e.key==="a") me.x=Math.max(0, me.x-step);
-  if(e.key==="d") me.x=Math.min(window.innerWidth-30, me.x+step);
+// 랜덤 색
+function randomColor() {
+  const c = ["#ff4d4d","#4da6ff","#ffcc00","#66ff66","#ff66ff"];
+  return c[Math.floor(Math.random()*c.length)];
+}
 
-  supabase.from("players").upsert([me]);
+// 이동 및 전송
+function updatePlayer() {
+  sb.from("players").upsert([me]);
   render();
+}
+
+// 조이스틱
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+let joy = { active:false, dx:0, dy:0 };
+
+joystick.addEventListener("touchstart", e=>{
+  joy.active=true;
+}, {passive:true});
+joystick.addEventListener("touchmove", e=>{
+  const t = e.touches[0];
+  const rect = joystick.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  let dx = t.clientX - cx;
+  let dy = t.clientY - cy;
+  const dist = Math.min(Math.hypot(dx,dy), 40);
+  const angle = Math.atan2(dy,dx);
+  stick.style.left = 40 + Math.cos(angle)*dist + "px";
+  stick.style.top = 40 + Math.sin(angle)*dist + "px";
+  joy.dx = Math.cos(angle) * (dist/40);
+  joy.dy = Math.sin(angle) * (dist/40);
+}, {passive:true});
+joystick.addEventListener("touchend", ()=>{
+  joy.active=false; joy.dx=0; joy.dy=0;
+  stick.style.left="40px"; stick.style.top="40px";
 });
 
-// 초기 등록
-supabase.from("players").upsert([me]);
+// 터치로 총알 발사
+area.addEventListener("touchstart", shoot);
+area.addEventListener("click", shoot);
 
-// Realtime 구독
-supabase.from("players").on("INSERT", payload => { players[payload.new.username] = payload.new; render(); }).subscribe();
-supabase.from("players").on("UPDATE", payload => { players[payload.new.username] = payload.new; render(); }).subscribe();
-supabase.from("players").on("DELETE", payload => { 
-  if(players[payload.old.username]){
-    if(players[payload.old.username].el) players[payload.old.username].el.remove();
-    delete players[payload.old.username];
+function shoot(e){
+  const dx = (Math.random()-0.5)*2;
+  const dy = (Math.random()-0.5)*2;
+  const bullet = { shooter: me.username, x: me.x, y: me.y, dx, dy };
+  sb.from("bullets").insert([bullet]);
+}
+
+// Supabase sync
+sb.from("players").upsert([me]);
+
+sb.channel("realtime:players")
+  .on("postgres_changes", { event: "*", schema: "public", table: "players" }, payload=>{
+    const p = payload.new;
+    if(p.username !== me.username){ others[p.username]=p; render(); }
+  }).subscribe();
+
+sb.channel("realtime:bullets")
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "bullets" }, payload=>{
+    const b = payload.new;
+    bullets[b.id] = b;
     render();
-  }
-}).subscribe();
+  }).subscribe();
 
-// 화면 크기 변경 시 범위 제한
-window.addEventListener("resize", render);
+// 루프
+setInterval(()=>{
+  me.x += joy.dx*6;
+  me.y += joy.dy*6;
+  updatePlayer();
+
+  for (let id in bullets){
+    let b = bullets[id];
+    b.x += b.dx*10;
+    b.y += b.dy*10;
+    if (b.x<0||b.y<0||b.x>window.innerWidth||b.y>window.innerHeight){
+      if(b.el){ b.el.remove(); delete bullets[id]; }
+    }
+  }
+  render();
+}, 50);
 </script>
 </body>
 </html>
