@@ -9,28 +9,32 @@ body,html{margin:0;padding:0;overflow:hidden;background:#222}
 #gameArea{position:relative;width:100vw;height:100vh;background:#333}
 .player{position:absolute;width:30px;height:30px;border-radius:50%;text-align:center;color:white;font-size:0.8rem;line-height:30px;}
 #me{background:blue;}
-#others{background:red;}
+.other{background:red;}
 </style>
 </head>
 <body>
 <div id="gameArea"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
+// --- Supabase 연결 ---
 const SUPABASE_URL = "https://wtifzpbzjkyfosffamrx.supabase.co";
-const SUPABASE_KEY = "YOUR_ANON_KEY";
+const SUPABASE_KEY = "YOUR_ANON_KEY"; // 본인 anon key로 교체
 const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// --- 익명 유저 ---
 let me = { username: prompt("닉네임 입력:"), x:50, y:50 };
-let players = {};
+let players = {}; // 다른 플레이어 정보
 
 const gameArea = document.getElementById("gameArea");
 
+// 내 캐릭터 생성
 const myEl = document.createElement("div");
 myEl.id = "me";
 myEl.className = "player";
 myEl.innerText = me.username;
 gameArea.appendChild(myEl);
 
+// 렌더링 함수
 function render() {
   myEl.style.left = me.x + "px";
   myEl.style.top = me.y + "px";
@@ -40,7 +44,7 @@ function render() {
     let p = players[u];
     if(!p.el){
       p.el = document.createElement("div");
-      p.el.className = "player";
+      p.el.className = "player other";
       p.el.innerText = p.username;
       gameArea.appendChild(p.el);
     }
@@ -49,13 +53,13 @@ function render() {
   }
 }
 
-// 이동 처리
+// 키 이동 처리 (WASD)
 document.addEventListener("keydown", e=>{
   const step = 5;
-  if(e.key==="w") me.y-=step;
-  if(e.key==="s") me.y+=step;
-  if(e.key==="a") me.x-=step;
-  if(e.key==="d") me.x+=step;
+  if(e.key==="w") me.y=Math.max(0, me.y-step);
+  if(e.key==="s") me.y=Math.min(window.innerHeight-30, me.y+step);
+  if(e.key==="a") me.x=Math.max(0, me.x-step);
+  if(e.key==="d") me.x=Math.min(window.innerWidth-30, me.x+step);
 
   supabase.from("players").upsert([me]);
   render();
@@ -65,9 +69,18 @@ document.addEventListener("keydown", e=>{
 supabase.from("players").upsert([me]);
 
 // Realtime 구독
-supabase.from("players").on("INSERT", p => { players[p.new.username] = p.new; render(); }).subscribe();
-supabase.from("players").on("UPDATE", p => { players[p.new.username] = p.new; render(); }).subscribe();
+supabase.from("players").on("INSERT", payload => { players[payload.new.username] = payload.new; render(); }).subscribe();
+supabase.from("players").on("UPDATE", payload => { players[payload.new.username] = payload.new; render(); }).subscribe();
+supabase.from("players").on("DELETE", payload => { 
+  if(players[payload.old.username]){
+    if(players[payload.old.username].el) players[payload.old.username].el.remove();
+    delete players[payload.old.username];
+    render();
+  }
+}).subscribe();
 
+// 화면 크기 변경 시 범위 제한
+window.addEventListener("resize", render);
 </script>
 </body>
 </html>
