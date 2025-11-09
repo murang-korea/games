@@ -1,16 +1,13 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Brawl Mini</title>
 <style>
-  :root{
-    --bg:#111214; --canvas-bg:#222428; --wall:#444; --ui:#fff;
-  }
-  html,body{height:100%;margin:0;background:var(--bg);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans KR',sans-serif;color:var(--ui);}
-  #wrap{width:100%;height:100%;position:relative;overflow:hidden;}
-  canvas{display:block;background:var(--canvas-bg);touch-action:none; border-radius:8px; margin:auto; width:100%; height:100%;}
+  html,body{height:100%;margin:0;background:#111;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans KR',sans-serif;color:#fff}
+  #wrap{position:relative;width:100%;height:100%}
+  canvas{display:block; width:100%; height:100%; touch-action:none; background:#222; }
   #ui{position:absolute;left:12px;top:12px;z-index:20}
   #ui .hp{background:rgba(255,255,255,0.06);padding:6px 10px;border-radius:10px}
   .hint{position:absolute;right:12px;top:12px;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:10px;font-size:13px}
@@ -18,9 +15,9 @@
 </head>
 <body>
   <div id="wrap">
-    <div id="ui"><span class="hp">HP: <span id="hp">100</span></span></div>
-    <div class="hint">왼쪽 드래그: 이동 • 오른쪽 드래그 후 놓기: 발사</div>
     <canvas id="game"></canvas>
+    <div id="ui"><span class="hp">HP: <span id="hp">100</span></span></div>
+    <div class="hint">왼쪽 드래그: 이동 · 오른쪽 드래그 후 놓기: 발사</div>
   </div>
 
 <script>
@@ -28,213 +25,224 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
-  // 기본 객체
-  let W=innerWidth, H=innerHeight;
-  function fitCanvas(){
-    // 캔버스를 실제 렌더 해상도로 맞춘다 (CSS 100% 유지)
-    canvas.width = innerWidth;
-    canvas.height = innerHeight;
+  // --- 화면 맞춤 ---
+  function fit() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     W = canvas.width; H = canvas.height;
-  }
-  fitCanvas();
-  addEventListener('resize', () => {
-    fitCanvas();
     generateWalls();
     placeEntitiesSafe();
-  });
+  }
+  let W = window.innerWidth, H = window.innerHeight;
+  fit();
+  window.addEventListener('resize', () => { fit(); });
 
-  // 플레이어, 적
+  // --- 엔티티 ---
   const player = { x:0, y:0, r:20, color:'#4f8cff', hp:100, bullets:[] };
   const enemy  = { x:0, y:0, r:20, color:'#ff6b6b', hp:50, alive:true, bullets:[], dirX:1, dirY:1 };
 
-  // 맵(벽)
+  // --- 맵(벽) ---
   let walls = [];
-
   function rectsOverlap(a,b){
     return !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
   }
-  function circleIntersectsRect(cx,cy,cr,rect){
-    // 가까운 점 찾기 (AABB-circle)
+  function circleRectCollision(cx,cy,cr,rect){
     const nx = Math.max(rect.x, Math.min(cx, rect.x + rect.width));
     const ny = Math.max(rect.y, Math.min(cy, rect.y + rect.height));
     const dx = nx - cx, dy = ny - cy;
     return (dx*dx + dy*dy) <= (cr*cr);
   }
 
-  // 자동 맵 생성: 화면에 비례해 벽 생성, 플레이어/적이 벽 내부에 들어가지 않도록 재시도
   function generateWalls(){
     walls = [];
     const area = W * H;
-    const approxCount = Math.max(2, Math.floor(area / 120000)); // 화면크기 비례
-    const attempts = approxCount * 6;
+    const approxCount = Math.max(2, Math.floor(area / 120000)); // 화면 비례
+    let triesOverall = 0;
     for(let i=0;i<approxCount;i++){
       let tries = 0;
-      while(tries++ < 30){
+      while(tries++ < 40 && triesOverall < 1000){
+        triesOverall++;
         const ww = Math.max(60, Math.random() * Math.min(W*0.25, 300));
         const hh = 18 + Math.random()*40;
         const x = Math.random() * (W - ww);
         const y = Math.random() * (H - hh);
-        const candidate = { x, y, width: ww, height: hh };
-        // 너무 중앙에 길게 막히지 않게 간단 검사 (다른 벽과 겹치지 않는지)
+        const c = {x,y,width:ww,height:hh};
         let bad = false;
-        for(const w of walls) if(rectsOverlap(w, candidate)) { bad = true; break; }
-        if(!bad){ walls.push(candidate); break; }
+        for(const w of walls) if(rectsOverlap(w,c)){ bad = true; break; }
+        // 안 좋은 위치: 너무 중앙 장벽으로 전체 가로막지 않음
+        if(!bad) { walls.push(c); break; }
       }
     }
   }
 
-  // 안전한 위치에 플레이어/적 배치 (벽과 겹치지 않게)
   function placeEntitiesSafe(){
-    // player: 아래쪽 중앙 근처
-    const margin = 40;
-    const triesMax = 200;
-    // player
+    const triesMax = 300;
+    // player (아래중앙 근처)
     for(let t=0;t<triesMax;t++){
-      const px = W * (0.5 + (Math.random()-0.5)*0.2);
-      const py = H * (0.7 + (Math.random()-0.5)*0.1);
-      const inWall = walls.some(w => circleIntersectsRect(px,py,player.r+4,w));
-      if(!inWall){ player.x = px; player.y = py; break; }
+      const px = W * (0.5 + (Math.random()-0.5)*0.18);
+      const py = H * (0.72 + (Math.random()-0.5)*0.12);
+      const inside = walls.some(w => circleRectCollision(px,py,player.r+4,w));
+      if(!inside){ player.x = px; player.y = py; break; }
+      if(t===triesMax-1){ player.x = W*0.5; player.y = H*0.85; }
     }
-    // enemy
+    // enemy (위중앙 근처)
     for(let t=0;t<triesMax;t++){
-      const ex = W * (0.5 + (Math.random()-0.5)*0.2);
-      const ey = H * (0.3 + (Math.random()-0.5)*0.1);
-      const inWall = walls.some(w => circleIntersectsRect(ex,ey,enemy.r+4,w));
+      const ex = W * (0.5 + (Math.random()-0.5)*0.18);
+      const ey = H * (0.28 + (Math.random()-0.5)*0.12);
+      const inside = walls.some(w => circleRectCollision(ex,ey,enemy.r+4,w));
       const tooClose = Math.hypot(ex-player.x, ey-player.y) < 120;
-      if(!inWall && !tooClose){ enemy.x = ex; enemy.y = ey; break; }
+      if(!inside && !tooClose){ enemy.x = ex; enemy.y = ey; break; }
+      if(t===triesMax-1){ enemy.x=W*0.5; enemy.y=H*0.15; }
     }
   }
 
+  // 초기 맵/배치
   generateWalls();
   placeEntitiesSafe();
 
-  // 입력 (듀얼스틱)
-  // 각각: { id, sx, sy, x, y } or null
-  let moveStick = null;
-  let aimStick  = null;
-  let moveVec = {x:0,y:0};
-  let aimVec  = {x:0,y:0};
-  let fireCooldownFrames = 0;
+  // --- 입력 (듀얼스틱) ---
+  // pointers: map id -> { type: 'move'|'aim', id, sx, sy, x, y }
+  const pointers = new Map();
+  let movePointer = null, aimPointer = null;
+  let moveVec = {x:0,y:0}, aimVec = {x:0,y:0};
+  let fireCooldown = 0;
 
-  // 터치 처리
+  function pointerAssign(id, cx){
+    if(cx < W/2 && !movePointer){
+      movePointer = { id, sx: cx, sy: lastYById.get(id) || (H*0.6), x:cx, y:lastYById.get(id) || (H*0.6) };
+      pointers.set(id, movePointer);
+      return movePointer;
+    }
+    if(cx >= W/2 && !aimPointer){
+      aimPointer = { id, sx: cx, sy: lastYById.get(id) || (H*0.4), x:cx, y:lastYById.get(id) || (H*0.4) };
+      pointers.set(id, aimPointer);
+      return aimPointer;
+    }
+    // ignore extras
+    return null;
+  }
+
+  // keep last Y for mouse mousedown start if needed
+  const lastYById = new Map();
+
+  // touch handlers
   canvas.addEventListener('touchstart', (ev) => {
     for(const t of ev.changedTouches){
-      assignPointerStart(t.clientX, t.clientY, t.identifier);
+      lastYById.set(t.identifier, t.clientY);
+      pointerAssign(t.identifier, t.clientX);
     }
     ev.preventDefault();
   }, { passive:false });
 
   canvas.addEventListener('touchmove', (ev) => {
     for(const t of ev.changedTouches){
-      updatePointerMove(t.clientX, t.clientY, t.identifier);
+      const p = pointers.get(t.identifier);
+      if(p){
+        updatePointerMove(p, t.clientX, t.clientY);
+      }
     }
     ev.preventDefault();
   }, { passive:false });
 
   canvas.addEventListener('touchend', (ev) => {
     for(const t of ev.changedTouches){
-      handlePointerEnd(t.identifier);
+      const p = pointers.get(t.identifier);
+      if(p){
+        handlePointerEnd(p);
+        pointers.delete(t.identifier);
+      } else {
+        // maybe it was unassigned; still clear lastY
+        lastYById.delete(t.identifier);
+      }
     }
     ev.preventDefault();
   }, { passive:false });
 
-  // 마우스(데스크탑) — 하나의 포인터로 간단히 지원
-  let mousePointerId = 'mouse';
+  // mouse support
+  let mouseId = 'mouse';
   let mouseDown = false;
   canvas.addEventListener('mousedown', (ev) => {
     mouseDown = true;
-    assignPointerStart(ev.clientX, ev.clientY, mousePointerId);
+    lastYById.set(mouseId, ev.clientY);
+    pointerAssign(mouseId, ev.clientX);
+    const p = pointers.get(mouseId) || (mouseId === (movePointer && movePointer.id) ? movePointer : aimPointer);
+    if(p) updatePointerMove(p, ev.clientX, ev.clientY);
   });
   window.addEventListener('mousemove', (ev) => {
-    if(mouseDown) updatePointerMove(ev.clientX, ev.clientY, mousePointerId);
+    if(!mouseDown) return;
+    const p = pointers.get(mouseId);
+    if(p) updatePointerMove(p, ev.clientX, ev.clientY);
   });
   window.addEventListener('mouseup', (ev) => {
-    if(mouseDown) handlePointerEnd(mousePointerId);
+    if(!mouseDown) return;
+    const p = pointers.get(mouseId);
+    if(p){ handlePointerEnd(p); pointers.delete(mouseId); }
     mouseDown = false;
   });
 
-  function assignPointerStart(x,y id){
-    // split by screen half:
-  }
-  // fix: accidental syntax error — implement assignPointerStart properly below
-  function assignPointerStart(x,y,id){
-    if(x < W/2 && !moveStick){
-      moveStick = { id, sx:x, sy:y, x, y };
-      moveVec = {x:0,y:0};
-    } else if(x >= W/2 && !aimStick){
-      aimStick = { id, sx:x, sy:y, x, y };
-      aimVec = {x:0,y:0};
-    } else {
-      // extra pointers ignored
-    }
-  }
-  function updatePointerMove(x,y,id){
-    if(moveStick && id === moveStick.id){
-      const dx = x - moveStick.sx;
-      const dy = y - moveStick.sy;
-      const limit = Math.min(80, Math.max(40, Math.min(W,H)*0.06));
-      const dist = Math.hypot(dx,dy);
-      const ratio = dist > limit ? limit/dist : 1;
-      moveStick.x = moveStick.sx + dx * ratio;
-      moveStick.y = moveStick.sy + dy * ratio;
-      moveVec = { x: (moveStick.x - moveStick.sx) / limit, y: (moveStick.y - moveStick.sy) / limit };
-    } else if(aimStick && id === aimStick.id){
-      const dx = x - aimStick.sx;
-      const dy = y - aimStick.sy;
-      const limit = Math.min(80, Math.max(40, Math.min(W,H)*0.06));
-      const dist = Math.hypot(dx,dy);
-      const ratio = dist > limit ? limit/dist : 1;
-      aimStick.x = aimStick.sx + dx * ratio;
-      aimStick.y = aimStick.sy + dy * ratio;
-      aimVec = { x: (aimStick.x - aimStick.sx) / limit, y: (aimStick.y - aimStick.sy) / limit };
-    }
-  }
-  function handlePointerEnd(id){
-    // if ended aimStick -> fire in aimVec direction (if strong enough and cooldown)
-    if(aimStick && id === aimStick.id){
-      const magnitude = Math.hypot(aimVec.x, aimVec.y);
-      if(magnitude > 0.25 && fireCooldownFrames <= 0){
-        shoot(aimVec.x, aimVec.y);
-        fireCooldownFrames = Math.max(6, Math.round(0.3 * 60)); // 0.3s @60fps
-      }
-      aimStick = null;
-      aimVec = {x:0,y:0};
-    }
-    if(moveStick && id === moveStick.id){
-      moveStick = null; moveVec = {x:0,y:0};
+  function updatePointerMove(p, cx, cy){
+    // limit radius
+    const dx = cx - p.sx, dy = cy - p.sy;
+    const limit = Math.min(90, Math.max(40, Math.min(W,H)*0.06));
+    const dist = Math.hypot(dx,dy);
+    const r = dist > limit ? limit / dist : 1;
+    p.x = p.sx + dx * r;
+    p.y = p.sy + dy * r;
+    if(p === movePointer){
+      moveVec = { x: (p.x - p.sx) / limit, y: (p.y - p.sy) / limit };
+    } else if(p === aimPointer){
+      aimVec = { x: (p.x - p.sx) / limit, y: (p.y - p.sy) / limit };
     }
   }
 
-  // 총알 발사
+  function handlePointerEnd(p){
+    if(p === aimPointer){
+      const mag = Math.hypot(aimVec.x, aimVec.y);
+      if(mag > 0.25 && fireCooldown <= 0){
+        shoot(aimVec.x, aimVec.y);
+        fireCooldown = Math.max(10, Math.round(0.28 * 60)); // 프레임 단위 쿨다운
+      }
+      aimPointer = null; aimVec = {x:0,y:0};
+    } else if(p === movePointer){
+      movePointer = null; moveVec = {x:0,y:0};
+    }
+  }
+
+  // --- 발사 ---
   function shoot(dx,dy){
     const mag = Math.hypot(dx,dy);
     if(mag === 0) return;
     const angle = Math.atan2(dy,dx);
-    const speed = 9;
-    player.bullets.push({ x: player.x, y: player.y, dx: Math.cos(angle)*speed, dy: Math.sin(angle)*speed, r:5 });
+    const speed = Math.max(6, Math.min(12, Math.max(W,H) * 0.007));
+    player.bullets.push({ x: player.x, y: player.y, dx: Math.cos(angle)*speed, dy: Math.sin(angle)*speed, r:6 });
   }
 
-  // 적 발사 (interval)
+  // --- 적 AI 발사 ---
   setInterval(() => {
     if(!enemy.alive) return;
-    const dx = player.x - enemy.x, dy = player.y - enemy.y;
+    const dx = player.x - enemy.x;
+    const dy = player.y - enemy.y;
     const a = Math.atan2(dy,dx);
-    enemy.bullets.push({ x:enemy.x, y:enemy.y, dx: Math.cos(a)*4.2, dy: Math.sin(a)*4.2, r:5 });
-  }, 1300);
+    enemy.bullets.push({ x: enemy.x, y: enemy.y, dx: Math.cos(a)*4.2, dy: Math.sin(a)*4.2, r:5 });
+  }, 1200 + Math.random()*400);
 
-  // 벽 충돌 처리 for circle (entity)
-  function keepOutsideWalls(entity){
-    // push out of walls by simple clamping — repeatedly adjust if inside
-    for(let iter=0; iter<3; iter++){
+  // --- 벽 충돌 유틸 ---
+  function pushOutOfWalls(entity){
+    // 반복적으로 보정 (간단한 해결)
+    for(let k=0;k<4;k++){
       for(const w of walls){
-        if(circleIntersectsRect(entity.x, entity.y, entity.r, w)){
-          // compute minimal push vector: test four directions
-          const cx = Math.max(w.x, Math.min(entity.x, w.x+w.width));
-          const cy = Math.max(w.y, Math.min(entity.y, w.y+w.height));
-          const dx = entity.x - cx;
-          const dy = entity.y - cy;
-          const d = Math.hypot(dx,dy) || 0.001;
-          const overlap = entity.r - d;
+        if(circleRectCollision(entity.x, entity.y, entity.r, w)){
+          // find nearest point
+          const nx = Math.max(w.x, Math.min(entity.x, w.x + w.width));
+          const ny = Math.max(w.y, Math.min(entity.y, w.y + w.height));
+          let dx = entity.x - nx, dy = entity.y - ny;
+          let d = Math.hypot(dx,dy);
+          if(d < 0.001){ // center: push away by minimal vector
+            dx = (entity.x > w.x + w.width/2) ? 1 : -1;
+            dy = (entity.y > w.y + w.height/2) ? 1 : -1;
+            d = Math.hypot(dx,dy);
+          }
+          const overlap = entity.r - d + 0.5;
           if(overlap > 0){
             entity.x += (dx/d) * overlap;
             entity.y += (dy/d) * overlap;
@@ -244,7 +252,6 @@
     }
   }
 
-  // 총알-벽 충돌 검사
   function bulletHitsWall(b){
     for(const w of walls){
       if(b.x > w.x && b.x < w.x + w.width && b.y > w.y && b.y < w.y + w.height) return true;
@@ -252,42 +259,42 @@
     return false;
   }
 
-  // 물리/게임 루프
-  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  // --- 게임 루프 ---
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 
   function update(){
-    // 이동
-    const baseSpeed = Math.max(W,H) * 0.003;
-    player.x += moveVec.x * baseSpeed * 5;
-    player.y += moveVec.y * baseSpeed * 5;
+    // movement
+    const speed = Math.max(W,H) * 0.0035;
+    player.x += moveVec.x * speed * 5;
+    player.y += moveVec.y * speed * 5;
 
-    // enemy wandering simple
+    // enemy wandering
     if(enemy.alive){
-      if(Math.random() < 0.012) { enemy.dirX *= -1; }
-      if(Math.random() < 0.012) { enemy.dirY *= -1; }
+      if(Math.random() < 0.015) enemy.dirX *= -1;
+      if(Math.random() < 0.015) enemy.dirY *= -1;
       enemy.x += enemy.dirX * 1.6;
       enemy.y += enemy.dirY * 1.6;
     }
 
-    // bounds
+    // clamp bounds
     player.x = clamp(player.x, player.r, W - player.r);
     player.y = clamp(player.y, player.r, H - player.r);
     enemy.x = clamp(enemy.x, enemy.r, W - enemy.r);
     enemy.y = clamp(enemy.y, enemy.r, H - enemy.r);
 
-    // avoid walls
-    keepOutsideWalls(player);
-    keepOutsideWalls(enemy);
+    // prevent stuck in wall
+    pushOutOfWalls(player);
+    pushOutOfWalls(enemy);
 
-    // bullets move & collisions
+    // move bullets
     moveBullets(player.bullets);
     moveBullets(enemy.bullets);
 
-    // bullets vs entities
+    // bullet hits
     handleBulletHits();
 
-    // cooldown
-    if(fireCooldownFrames > 0) fireCooldownFrames--;
+    // cooldown tick
+    if(fireCooldown > 0) fireCooldown--;
 
     draw();
 
@@ -298,36 +305,36 @@
     for(let i=list.length-1;i>=0;i--){
       const b = list[i];
       b.x += b.dx; b.y += b.dy;
-      // remove if out of bounds or hit wall
-      if(b.x < -50 || b.x > W+50 || b.y < -50 || b.y > H+50 || bulletHitsWall(b)){
-        list.splice(i,1); continue;
+      // remove if out of bounds or hits wall
+      if(b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60 || bulletHitsWall(b)){
+        list.splice(i,1);
       }
     }
   }
 
   function handleBulletHits(){
-    // player bullets -> enemy
+    // player -> enemy
     for(let i=player.bullets.length-1;i>=0;i--){
       const b = player.bullets[i];
       if(enemy.alive && Math.hypot(b.x - enemy.x, b.y - enemy.y) < (b.r + enemy.r)){
         player.bullets.splice(i,1);
         enemy.hp -= 10;
-        if(enemy.hp <= 0){ enemy.alive = false; setTimeout(()=>alert('🎉 승리! 새로고침하면 다시 시작합니다.'),80); }
+        if(enemy.hp <= 0){ enemy.alive = false; setTimeout(()=>{ alert('🎉 승리! 새로고침하면 다시 시작합니다.'); }, 80); }
       }
     }
-    // enemy bullets -> player
+    // enemy -> player
     for(let i=enemy.bullets.length-1;i>=0;i--){
       const b = enemy.bullets[i];
       if(Math.hypot(b.x - player.x, b.y - player.y) < (b.r + player.r)){
         enemy.bullets.splice(i,1);
         player.hp -= 10;
         document.getElementById('hp').textContent = player.hp;
-        if(player.hp <= 0){ setTimeout(()=>{ alert('💀 패배! 새로고침하세요.'); location.reload(); },80); }
+        if(player.hp <= 0){ setTimeout(()=>{ alert('💀 패배! 새로고침하세요.'); location.reload(); }, 80); }
       }
     }
   }
 
-  // 그리기
+  // --- 그리기 ---
   function draw(){
     ctx.clearRect(0,0,W,H);
 
@@ -342,8 +349,8 @@
       ctx.fillStyle = enemy.color;
       ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.r, 0, Math.PI*2); ctx.fill();
       // hp bar
-      ctx.fillStyle='#fff'; ctx.fillRect(enemy.x - 25, enemy.y - enemy.r - 18, 50, 6);
-      ctx.fillStyle='#f33'; ctx.fillRect(enemy.x - 25, enemy.y - enemy.r - 18, 50 * Math.max(0, enemy.hp)/50, 6);
+      ctx.fillStyle = '#fff'; ctx.fillRect(enemy.x - 25, enemy.y - enemy.r - 18, 50, 6);
+      ctx.fillStyle = '#f33'; ctx.fillRect(enemy.x - 25, enemy.y - enemy.r - 18, 50 * Math.max(0, enemy.hp)/50, 6);
     }
 
     // player
@@ -351,22 +358,22 @@
     ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
 
     // bullets
-    ctx.fillStyle='#fff';
+    ctx.fillStyle = '#fff';
     for(const b of player.bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
-    ctx.fillStyle='#ffb3b3';
+    ctx.fillStyle = '#ffb3b3';
     for(const b of enemy.bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
 
-    // draw sticks if active
-    if(moveStick){
-      drawStickVisual(moveStick);
+    // draw sticks visuals
+    if(movePointer){
+      drawStick(movePointer);
     }
-    if(aimStick){
-      drawStickVisual(aimStick);
+    if(aimPointer){
+      drawStick(aimPointer);
     }
 
-    // optional : draw cooldown indicator near right bottom
-    if(fireCooldownFrames > 0){
-      const perc = fireCooldownFrames / Math.max(1, Math.round(0.3*60));
+    // cooldown indicator
+    if(fireCooldown > 0){
+      const perc = fireCooldown / Math.max(1, Math.round(0.28*60));
       const x = W - 70, y = H - 70;
       ctx.globalAlpha = 0.5;
       ctx.beginPath(); ctx.arc(x,y,36,0,Math.PI*2); ctx.fillStyle='#444'; ctx.fill();
@@ -377,24 +384,25 @@
     }
   }
 
-  function drawStickVisual(s){
-    ctx.globalAlpha = 0.35;
+  function drawStick(s){
+    ctx.globalAlpha = 0.32;
     ctx.fillStyle = '#888';
     ctx.beginPath(); ctx.arc(s.sx, s.sy, 44, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 0.95;
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#ccc';
     ctx.beginPath(); ctx.arc(s.x, s.y, 28, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 1;
   }
 
-  // 유틸
-  function randRange(a,b){ return a + Math.random()*(b-a); }
+  // --- 시작 세팅 ---
+  // ensure entities placed after initial wall gen
+  placeEntitiesSafe();
+  // seed player hp shown
+  document.getElementById('hp').textContent = player.hp;
+  // start loop
+  requestAnimationFrame(update);
 
-  // 시작
-  update();
-
-  // 안전히 초기값 세팅: 벽 생성 후 보정
-  // (이미 호출 above)
+  // expose global for debugging (optional)
+  window._brawl = { player, enemy, walls };
 })();
 </script>
 </body>
