@@ -59,7 +59,7 @@ const enemy = {
 let moveStick = null;
 let fireStick = null;
 let moveDir = {x:0,y:0};
-let fireDir = {x:0,y:0};
+let aimDir = {x:0,y:0};
 let fireCooldown = 0;
 
 // ===== 터치 =====
@@ -67,7 +67,7 @@ canvas.addEventListener("touchstart", e=>{
   for(const t of e.touches){
     if(t.clientX < window.innerWidth/2){ // 왼쪽 이동스틱
       moveStick = {id:t.identifier, sx:t.clientX, sy:t.clientY, x:t.clientX, y:t.clientY};
-    } else { // 오른쪽 발사스틱
+    } else { // 오른쪽 조준스틱
       fireStick = {id:t.identifier, sx:t.clientX, sy:t.clientY, x:t.clientX, y:t.clientY};
     }
   }
@@ -75,7 +75,6 @@ canvas.addEventListener("touchstart", e=>{
 
 canvas.addEventListener("touchmove", e=>{
   for(const t of e.touches){
-    // 이동스틱
     if(moveStick && t.identifier === moveStick.id){
       const dx = t.clientX - moveStick.sx;
       const dy = t.clientY - moveStick.sy;
@@ -86,7 +85,6 @@ canvas.addEventListener("touchmove", e=>{
       moveStick.y = moveStick.sy + dy * ratio;
       moveDir = {x: dx/limit, y: dy/limit};
     }
-    // 발사스틱
     if(fireStick && t.identifier === fireStick.id){
       const dx = t.clientX - fireStick.sx;
       const dy = t.clientY - fireStick.sy;
@@ -95,19 +93,27 @@ canvas.addEventListener("touchmove", e=>{
       const ratio = dist > limit ? limit/dist : 1;
       fireStick.x = fireStick.sx + dx * ratio;
       fireStick.y = fireStick.sy + dy * ratio;
-      fireDir = {x: dx/limit, y: dy/limit};
-      if(fireCooldown<=0 && dist>20){
-        shoot(fireDir.x, fireDir.y);
-        fireCooldown = 20; // 쿨타임 프레임 단위 (약 0.3초)
-      }
+      aimDir = {x: dx/limit, y: dy/limit};
     }
   }
 });
 
 canvas.addEventListener("touchend", e=>{
   for(const t of e.changedTouches){
-    if(moveStick && t.identifier === moveStick.id){ moveStick = null; moveDir={x:0,y:0}; }
-    if(fireStick && t.identifier === fireStick.id){ fireStick = null; fireDir={x:0,y:0}; }
+    // 이동 조이스틱
+    if(moveStick && t.identifier === moveStick.id){
+      moveStick = null;
+      moveDir={x:0,y:0};
+    }
+    // 발사 조이스틱 (놓을 때 발사)
+    if(fireStick && t.identifier === fireStick.id){
+      if(fireCooldown <= 0 && (Math.abs(aimDir.x) > 0.2 || Math.abs(aimDir.y) > 0.2)){
+        shoot(aimDir.x, aimDir.y);
+        fireCooldown = 20;
+      }
+      fireStick = null;
+      aimDir={x:0,y:0};
+    }
   }
 });
 
@@ -134,7 +140,6 @@ function update(){
   player.y += moveDir.y * speed * 5;
   fireCooldown = Math.max(0, fireCooldown-1);
 
-  // 적 이동
   if(enemy.alive){
     if(Math.random()<0.02) enemy.dirX *= -1;
     if(Math.random()<0.02) enemy.dirY *= -1;
@@ -208,9 +213,7 @@ function draw(){
   ctx.fillStyle="#fff"; drawBullets(player.bullets);
   ctx.fillStyle="#f77"; drawBullets(enemy.bullets);
 
-  // 이동 스틱
   if(moveStick) drawStick(moveStick);
-  // 발사 스틱
   if(fireStick) drawStick(fireStick);
 }
 function drawBullets(b){for(const x of b){ctx.beginPath();ctx.arc(x.x,x.y,4,0,Math.PI*2);ctx.fill();}}
