@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Brawl Mini+</title>
+<title>Brawl Mini++</title>
 <style>
   html, body {
     margin: 0;
@@ -46,42 +46,73 @@ window.addEventListener("resize", resize);
 resize();
 
 // === 플레이어, 적 기본값 ===
-const player = { x: canvas.width/2, y: canvas.height/2, size: 22, color:"#4f8cff", hp:100, bullets:[] };
-const enemy = { x: canvas.width/4, y: canvas.height/3, size: 22, color:"#ff4f4f", dirX:1, dirY:1, bullets:[], hp:50, alive:true };
+const player = { 
+  x: canvas.width/2, 
+  y: canvas.height/2, 
+  size: 22, 
+  color:"#4f8cff", 
+  hp:100, 
+  bullets:[], 
+  canShoot:true 
+};
+
+const enemy = { 
+  x: canvas.width/4, 
+  y: canvas.height/3, 
+  size: 22, 
+  color:"#ff4f4f", 
+  dirX:1, dirY:1, 
+  bullets:[], 
+  hp:50, 
+  alive:true 
+};
 
 const keys = {};
-let joystick = null;
+let moveJoystick = null;
+let fireButton = {x: canvas.width-90, y: canvas.height-90, r:50, active:false, cooldown:0};
 let moveDir = {x:0,y:0};
 
 // === 키보드 이동 ===
 document.addEventListener("keydown", e => keys[e.key] = true);
 document.addEventListener("keyup", e => keys[e.key] = false);
 
-// === 터치 이동 + 조이스틱 ===
+// === 터치 조작 ===
 canvas.addEventListener("touchstart", e=>{
-  const t = e.touches[0];
-  if(t.clientX < window.innerWidth/2){
-    joystick = { startX:t.clientX, startY:t.clientY, x:t.clientX, y:t.clientY };
-  } else {
-    fireBullet(t.clientX, t.clientY);
+  for(const t of e.touches){
+    if(t.clientX < window.innerWidth/2){
+      moveJoystick = { startX:t.clientX, startY:t.clientY, x:t.clientX, y:t.clientY, id:t.identifier };
+    } else {
+      if (fireButton.cooldown <= 0) {
+        fireButton.active = true;
+        fireButton.cooldown = 1; // 1초 쿨타임
+        fireBullet(t.clientX, t.clientY);
+        setTimeout(()=>{ fireButton.cooldown = 0; }, 1000);
+      }
+    }
   }
 });
+
 canvas.addEventListener("touchmove", e=>{
-  if(joystick){
-    const t = e.touches[0];
-    const dx = t.clientX - joystick.startX;
-    const dy = t.clientY - joystick.startY;
-    const dist = Math.hypot(dx,dy);
-    const limit = 50;
-    const ratio = dist > limit ? limit/dist : 1;
-    joystick.x = joystick.startX + dx * ratio;
-    joystick.y = joystick.startY + dy * ratio;
-    moveDir = {x: dx/limit, y: dy/limit};
+  if(moveJoystick){
+    for(const t of e.touches){
+      if(t.identifier === moveJoystick.id){
+        const dx = t.clientX - moveJoystick.startX;
+        const dy = t.clientY - moveJoystick.startY;
+        const dist = Math.hypot(dx,dy);
+        const limit = 50;
+        const ratio = dist > limit ? limit/dist : 1;
+        moveJoystick.x = moveJoystick.startX + dx * ratio;
+        moveJoystick.y = moveJoystick.startY + dy * ratio;
+        moveDir = {x: dx/limit, y: dy/limit};
+      }
+    }
   }
 });
-canvas.addEventListener("touchend", ()=>{
-  joystick = null;
+
+canvas.addEventListener("touchend", e=>{
+  moveJoystick = null;
   moveDir = {x:0,y:0};
+  fireButton.active = false;
 });
 
 function fireBullet(x, y){
@@ -178,7 +209,6 @@ function checkHits(){
   }
 }
 
-// === 거리 ===
 function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
 
 // === 그리기 ===
@@ -209,19 +239,27 @@ function draw(){
   ctx.fillStyle="white"; drawBullets(player.bullets);
   ctx.fillStyle="#ff7777"; drawBullets(enemy.bullets);
 
-  // 조이스틱
-  if(joystick){
+  // 이동 조이스틱
+  if(moveJoystick){
     ctx.globalAlpha = 0.4;
     ctx.beginPath();
-    ctx.arc(joystick.startX, joystick.startY, 40, 0, Math.PI*2);
+    ctx.arc(moveJoystick.startX, moveJoystick.startY, 40, 0, Math.PI*2);
     ctx.fillStyle="#888";
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(joystick.x, joystick.y, 25, 0, Math.PI*2);
+    ctx.arc(moveJoystick.x, moveJoystick.y, 25, 0, Math.PI*2);
     ctx.fillStyle="#ccc";
     ctx.fill();
     ctx.globalAlpha = 1.0;
   }
+
+  // 발사 버튼
+  ctx.beginPath();
+  ctx.globalAlpha = fireButton.cooldown > 0 ? 0.3 : 0.6;
+  ctx.arc(fireButton.x, fireButton.y, fireButton.r, 0, Math.PI*2);
+  ctx.fillStyle = fireButton.cooldown > 0 ? "#666" : "#4f8cff";
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
 }
 
 function drawBullets(bullets){
