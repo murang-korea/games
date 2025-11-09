@@ -6,192 +6,184 @@
 <title>Brawl Mini</title>
 <style>
   * { box-sizing: border-box; touch-action: none; }
-  body, html {
-    margin: 0; padding: 0; overflow: hidden;
-    background: #1a1a1a; height: 100%; width: 100%;
-  }
-  canvas { display: block; background: #222; }
-  #ui {
-    position: fixed; bottom: 10px; left: 10px;
-    width: 100%; pointer-events: none;
-  }
+  body, html { margin:0; padding:0; overflow:hidden; background:#111; height:100%; }
+  canvas { display:block; background:#1c1c1c; }
   .joystick {
-    width: 120px; height: 120px; border-radius: 50%;
-    background: rgba(255,255,255,0.1);
-    position: absolute; pointer-events: auto;
+    width:120px; height:120px; border-radius:50%;
+    background:rgba(255,255,255,0.08); position:absolute;
+    pointer-events:auto;
   }
   .stick {
-    width: 60px; height: 60px; border-radius: 50%;
-    background: rgba(255,255,255,0.5);
-    position: absolute; left: 30px; top: 30px;
-    transition: 0.05s;
+    width:60px; height:60px; border-radius:50%;
+    background:rgba(255,255,255,0.4); position:absolute;
+    left:30px; top:30px; transition:0.05s;
   }
-  #moveJoy { left: 10px; bottom: 10px; }
-  #fireJoy { right: 10px; bottom: 10px; }
+  #moveJoy { left:10px; bottom:10px; }
+  #fireJoy { right:10px; bottom:10px; }
+  #hpBar {
+    position:fixed; top:10px; left:50%; transform:translateX(-50%);
+    width:60%; height:10px; background:#333; border-radius:5px;
+  }
+  #hpBar div {
+    height:100%; width:100%; background:limegreen; border-radius:5px;
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-
-<div id="ui">
-  <div id="moveJoy" class="joystick"><div class="stick" id="moveStick"></div></div>
-  <div id="fireJoy" class="joystick"><div class="stick" id="fireStick"></div></div>
-</div>
+<div id="hpBar"><div id="hpFill"></div></div>
+<div id="moveJoy" class="joystick"><div class="stick" id="moveStick"></div></div>
+<div id="fireJoy" class="joystick"><div class="stick" id="fireStick"></div></div>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 let W, H;
-function resize() {
-  W = window.innerWidth; H = window.innerHeight;
-  canvas.width = W; canvas.height = H;
-}
-window.addEventListener("resize", resize);
-resize();
+function resize() { W = window.innerWidth; H = window.innerHeight; canvas.width=W; canvas.height=H; }
+window.addEventListener("resize", resize); resize();
 
-// --- Player, Bullets, Enemies ---
-const player = { x: W/2, y: H/2, r: 20, speed: 3, hp: 100, cooldown: 0 };
-const bullets = [];
-const enemies = [];
+const player = { x:0, y:0, r:20, speed:4, hp:100, cd:0 };
+const enemy = { x:0, y:-800, r:22, hp:100, cd:0 };
+const bullets = [], enemyBullets = [];
+let cameraY = 0;
+
+// 일정한 벽 맵
 const walls = [];
-
-// --- Auto-generate walls ---
 for (let i=0;i<10;i++){
-  walls.push({
-    x: Math.random() * (W-100),
-    y: Math.random() * (H-100),
-    w: 50 + Math.random()*50,
-    h: 50 + Math.random()*50
-  });
+  let offset = i*200;
+  walls.push({x:-150,y:-offset-400,w:300,h:30});
+  walls.push({x:-300,y:-offset-100,w:100,h:30});
+  walls.push({x:200,y:-offset-250,w:100,h:30});
 }
 
-// --- Enemy spawn ---
-for (let i=0;i<5;i++){
-  enemies.push({ x: Math.random()*W, y: Math.random()*H, r:18, hp:40 });
-}
-
-// --- Joystick logic ---
+// 조이스틱 클래스
 class Joystick {
-  constructor(base, stick) {
-    this.base = base; this.stick = stick;
-    this.touchId = null; this.value = {x:0,y:0};
-    base.addEventListener("touchstart", e=>this.start(e), false);
-    base.addEventListener("touchmove", e=>this.move(e), false);
-    base.addEventListener("touchend", e=>this.end(e), false);
+  constructor(base, stick){
+    this.base=base; this.stick=stick;
+    this.value={x:0,y:0}; this.touchId=null;
+    base.addEventListener("touchstart",e=>this.start(e));
+    base.addEventListener("touchmove",e=>this.move(e));
+    base.addEventListener("touchend",e=>this.end(e));
   }
-  start(e){
-    e.preventDefault();
-    if(this.touchId!==null)return;
-    const t = e.changedTouches[0];
-    this.touchId = t.identifier;
-    this.update(t);
-  }
-  move(e){
-    const t = [...e.changedTouches].find(t=>t.identifier===this.touchId);
-    if(!t)return;
-    this.update(t);
-  }
+  start(e){ const t=e.changedTouches[0]; this.touchId=t.identifier; this.update(t); }
+  move(e){ const t=[...e.changedTouches].find(t=>t.identifier===this.touchId); if(t)this.update(t); }
   update(t){
-    const rect = this.base.getBoundingClientRect();
-    const cx = rect.left + rect.width/2;
-    const cy = rect.top + rect.height/2;
-    const dx = t.clientX - cx;
-    const dy = t.clientY - cy;
-    const dist = Math.min(40, Math.hypot(dx,dy));
-    const angle = Math.atan2(dy,dx);
-    this.stick.style.left = 30 + dist*Math.cos(angle) + "px";
-    this.stick.style.top = 30 + dist*Math.sin(angle) + "px";
-    this.value = { x: (dx/40), y: (dy/40) };
+    const rect=this.base.getBoundingClientRect();
+    const cx=rect.left+rect.width/2, cy=rect.top+rect.height/2;
+    const dx=t.clientX-cx, dy=t.clientY-cy;
+    const dist=Math.min(40,Math.hypot(dx,dy));
+    const ang=Math.atan2(dy,dx);
+    this.stick.style.left=30+dist*Math.cos(ang)+"px";
+    this.stick.style.top=30+dist*Math.sin(ang)+"px";
+    this.value={x:dx/40,y:dy/40};
   }
   end(e){
-    const t = [...e.changedTouches].find(t=>t.identifier===this.touchId);
-    if(!t)return;
-    this.touchId=null;
+    const t=[...e.changedTouches].find(t=>t.identifier===this.touchId);
+    if(!t)return; this.touchId=null;
+    this.stick.style.left="30px"; this.stick.style.top="30px";
     this.value={x:0,y:0};
-    this.stick.style.left="30px";
-    this.stick.style.top="30px";
   }
 }
-const moveJoy = new Joystick(document.getElementById("moveJoy"), document.getElementById("moveStick"));
-const fireJoy = new Joystick(document.getElementById("fireJoy"), document.getElementById("fireStick"));
+const moveJoy = new Joystick(document.getElementById("moveJoy"),document.getElementById("moveStick"));
+const fireJoy = new Joystick(document.getElementById("fireJoy"),document.getElementById("fireStick"));
 
-let fireReady = true;
-function shoot(angle){
-  if(!fireReady)return;
-  fireReady=false;
-  setTimeout(()=>fireReady=true, 500);
-  bullets.push({x:player.x, y:player.y, dx:Math.cos(angle)*7, dy:Math.sin(angle)*7, life:60});
+// 총알 생성
+function shoot(x,y,ang,arr,speed=8){
+  arr.push({x,y,dx:Math.cos(ang)*speed,dy:Math.sin(ang)*speed,life:90});
 }
 
-// --- Game Loop ---
+// 충돌 감지
+function circleRect(px,py,pr,rx,ry,rw,rh){
+  const cx=Math.max(rx,Math.min(px,rx+rw));
+  const cy=Math.max(ry,Math.min(py,ry+rh));
+  return Math.hypot(px-cx,py-cy)<pr;
+}
+
+// 루프
 function loop(){
   ctx.clearRect(0,0,W,H);
 
-  // Player move
+  // 이동
   player.x += moveJoy.value.x * player.speed;
   player.y += moveJoy.value.y * player.speed;
-
-  // Wall collision
+  
+  // 벽 충돌
   for(const w of walls){
-    if(player.x+player.r>w.x && player.x-player.r<w.x+w.w &&
-       player.y+player.r>w.y && player.y-player.r<w.y+w.h){
-      // push out
-      if(player.x < w.x) player.x = w.x - player.r;
-      if(player.x > w.x+w.w) player.x = w.x+w.w + player.r;
-      if(player.y < w.y) player.y = w.y - player.r;
-      if(player.y > w.y+w.h) player.y = w.y+w.h + player.r;
+    if(circleRect(player.x,player.y,player.r,w.x,w.y,w.w,w.h)){
+      if(player.y>w.y) player.y=w.y+w.h+player.r;
+      else player.y=w.y-player.r;
     }
   }
 
-  // Fire
-  if(fireJoy.value.x!==0 || fireJoy.value.y!==0){
-    const angle = Math.atan2(fireJoy.value.y, fireJoy.value.x);
-    shoot(angle);
-  }
+  // 카메라 따라가기
+  cameraY = player.y + 200;
 
-  // Update bullets
+  // 발사
+  if((fireJoy.value.x||fireJoy.value.y)&&player.cd<=0){
+    const ang=Math.atan2(fireJoy.value.y,fireJoy.value.x);
+    shoot(player.x,player.y,ang,bullets);
+    player.cd=20;
+  }
+  if(player.cd>0)player.cd--;
+
+  // 총알 이동
+  for(const b of bullets){ b.x+=b.dx; b.y+=b.dy; b.life--; }
+  for(const b of enemyBullets){ b.x+=b.dx; b.y+=b.dy; b.life--; }
   for(let i=bullets.length-1;i>=0;i--){
-    const b = bullets[i];
-    b.x += b.dx; b.y += b.dy; b.life--;
+    const b=bullets[i];
     if(b.life<=0) bullets.splice(i,1);
-  }
-
-  // Enemy move & hit detect
-  for(const e of enemies){
-    const angle = Math.atan2(player.y - e.y, player.x - e.x);
-    e.x += Math.cos(angle)*1.5;
-    e.y += Math.sin(angle)*1.5;
-
-    for(let i=bullets.length-1;i>=0;i--){
-      const b = bullets[i];
-      if(Math.hypot(e.x-b.x,e.y-b.y)<e.r+4){
-        e.hp -= 20; bullets.splice(i,1);
-      }
+    if(Math.hypot(b.x-enemy.x,b.y-enemy.y)<enemy.r+4){
+      enemy.hp-=10; bullets.splice(i,1);
     }
   }
-  for(let i=enemies.length-1;i>=0;i--){
-    if(enemies[i].hp<=0) enemies.splice(i,1);
+  for(let i=enemyBullets.length-1;i>=0;i--){
+    const b=enemyBullets[i];
+    if(b.life<=0) enemyBullets.splice(i,1);
+    if(Math.hypot(b.x-player.x,b.y-player.y)<player.r+4){
+      player.hp-=10; enemyBullets.splice(i,1);
+    }
   }
 
-  // Draw walls
+  // 적 AI
+  const angToPlayer = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+  enemy.x += Math.cos(angToPlayer)*2;
+  enemy.y += Math.sin(angToPlayer)*2;
+  if(enemy.cd<=0){
+    shoot(enemy.x,enemy.y,angToPlayer,enemyBullets,6);
+    enemy.cd=40;
+  }
+  enemy.cd--;
+
+  // --- Draw ---
+  ctx.save();
+  ctx.translate(W/2 - player.x, H/2 - cameraY);
+
+  // 배경 맵
+  ctx.fillStyle="#222";
+  ctx.fillRect(-600,-1600,1200,1600);
+
+  // 벽
   ctx.fillStyle="#444";
   for(const w of walls) ctx.fillRect(w.x,w.y,w.w,w.h);
 
-  // Draw player
+  // 플레이어
   ctx.fillStyle="deepskyblue";
   ctx.beginPath(); ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
 
-  // Draw bullets
-  ctx.fillStyle="yellow";
-  for(const b of bullets){
-    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill();
-  }
+  // 적
+  ctx.fillStyle="crimson";
+  ctx.beginPath(); ctx.arc(enemy.x,enemy.y,enemy.r,0,Math.PI*2); ctx.fill();
 
-  // Draw enemies
-  ctx.fillStyle="red";
-  for(const e of enemies){
-    ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill();
-  }
+  // 총알
+  ctx.fillStyle="yellow";
+  for(const b of bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill(); }
+  ctx.fillStyle="orange";
+  for(const b of enemyBullets){ ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill(); }
+
+  ctx.restore();
+
+  // HP Bar
+  document.getElementById("hpFill").style.width = player.hp + "%";
 
   requestAnimationFrame(loop);
 }
