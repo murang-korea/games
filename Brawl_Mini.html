@@ -39,7 +39,7 @@ canvas.width=W;canvas.height=H;
 
 // ====== 기본 설정 ======
 const player={x:0,y:0,r:20,hp:100,reload:0};
-const enemy={x:300,y:-400,r:20,hp:100,reload:0,stuckTime:0};
+const enemy={x:300,y:-400,r:20,hp:100,reload:0,angle:0,avoid:false,avoidTimer:0};
 const bullets=[],eBullets=[];
 let moveVec={x:0,y:0},aimVec={x:0,y:0};
 let gameOver=false;
@@ -102,13 +102,9 @@ function collideCircleRect(c,r){
   return(dx*dx+dy*dy)<(c.r*c.r);
 }
 
-// ====== AI 벽 탐지 ======
-function checkWallNear(x,y,dist){
-  for(const w of walls){
-    const dx=Math.max(Math.abs(x-w.x)-w.w/2,0);
-    const dy=Math.max(Math.abs(y-w.y)-w.h/2,0);
-    if(Math.hypot(dx,dy)<dist)return true;
-  }
+function checkWall(x,y){
+  for(const w of walls)
+    if(collideCircleRect({x,y,r:enemy.r},w))return true;
   return false;
 }
 
@@ -136,39 +132,37 @@ function update(){
   // ====== 적 AI ======
   const dx=player.x-enemy.x,dy=player.y-enemy.y;
   const dist=Math.hypot(dx,dy);
-  const dirX=dx/dist,dirY=dy/dist;
-  let ex=enemy.x,ey=enemy.y;
   const moveSpeed=2;
-  if(dist>150){
-    // 벽 근처면 살짝 비켜가기
-    let moveAngle=Math.atan2(dirY,dirX);
-    if(checkWallNear(ex+dirX*40,ey+dirY*40,25)){
-      moveAngle+=Math.PI/2*(Math.random()<0.5?1:-1);
-    }
-    ex+=Math.cos(moveAngle)*moveSpeed;
-    ey+=Math.sin(moveAngle)*moveSpeed;
-    // 벽 충돌 안하면 이동
-    let hit=false;
-    for(const w of walls)
-      if(collideCircleRect({x:ex,y:ey,r:enemy.r},w))hit=true;
-    if(!hit){
-      enemy.x=clamp(ex,-mapWidth/2+enemy.r,mapWidth/2-enemy.r);
-      enemy.y=clamp(ey,-mapHeight/2+enemy.r,mapHeight/2-enemy.r);
-      enemy.stuckTime=0;
+
+  if(enemy.avoid){ // 회피 중
+    enemy.avoidTimer--;
+    enemy.x+=Math.cos(enemy.angle)*moveSpeed;
+    enemy.y+=Math.sin(enemy.angle)*moveSpeed;
+    if(enemy.avoidTimer<=0)enemy.avoid=false;
+  } else {
+    let dirAngle=Math.atan2(dy,dx);
+    const testX=enemy.x+Math.cos(dirAngle)*40;
+    const testY=enemy.y+Math.sin(dirAngle)*40;
+    if(checkWall(testX,testY)){
+      // 벽 있으면 방향 꺾기
+      dirAngle+=Math.PI/2*(Math.random()<0.5?1:-1);
+      enemy.avoid=true;
+      enemy.avoidTimer=40+Math.random()*30;
+      enemy.angle=dirAngle;
     } else {
-      enemy.stuckTime++;
+      enemy.angle=dirAngle;
+      enemy.x+=Math.cos(dirAngle)*moveSpeed;
+      enemy.y+=Math.sin(dirAngle)*moveSpeed;
     }
   }
-  // stuck되면 방향 랜덤 전환
-  if(enemy.stuckTime>30){
-    enemy.x+=Math.random()*40-20;
-    enemy.y+=Math.random()*40-20;
-    enemy.stuckTime=0;
-  }
+
+  // 맵 경계 제한
+  enemy.x=clamp(enemy.x,-mapWidth/2+enemy.r,mapWidth/2-enemy.r);
+  enemy.y=clamp(enemy.y,-mapHeight/2+enemy.r,mapHeight/2-enemy.r);
 
   // ====== 적 발사 ======
   if(enemy.reload<=0&&dist<600){
-    eBullets.push({x:enemy.x,y:enemy.y,dx:dirX*6,dy:dirY*6});
+    eBullets.push({x:enemy.x,y:enemy.y,dx:(dx/dist)*6,dy:(dy/dist)*6});
     enemy.reload=50;
   }
   if(enemy.reload>0)enemy.reload--;
@@ -191,14 +185,12 @@ function moveBullets(arr,target){
     if((b.x-target.x)**2+(b.y-target.y)**2<target.r**2){
       target.hp-=10;b.dead=true;
     }
-    // 맵 경계 밖
     if(b.x<-mapWidth/2||b.x>mapWidth/2||b.y<-mapHeight/2||b.y>mapHeight/2)
       b.dead=true;
   }
   arr.splice(0,arr.length,...arr.filter(b=>!b.dead));
 }
 
-// ====== 도우미 ======
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
 // ====== 그리기 ======
