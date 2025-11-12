@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Brawl Mini</title>
 <style>
-  body { margin: 0; overflow: hidden; background: #222; touch-action: none; }
-  canvas { display: block; background: #333; }
+  body { margin: 0; overflow: hidden; background: #111; touch-action: none; }
+  canvas { display: block; background: #222; }
   .joystick {
     position: fixed;
     width: 120px; height: 120px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.1);
-    border: 2px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.08);
+    border: 2px solid rgba(255,255,255,0.2);
     touch-action: none;
     z-index: 10;
   }
@@ -38,46 +38,25 @@ const ctx = canvas.getContext('2d');
 let W = innerWidth, H = innerHeight;
 canvas.width = W; canvas.height = H;
 
+// ====== 기본 데이터 ======
 const player = { x: 0, y: 0, r: 20, hp: 100, reload: 0 };
-const enemy = { x: 300, y: -400, r: 20, hp: 100, reload: 0, dir: 0 };
+const enemy = { x: 400, y: -400, r: 20, hp: 100, reload: 0 };
 const bullets = [], eBullets = [];
-const mapW = 1600, mapH = 2000;
-const walls = [];
-
 let moveVec = { x: 0, y: 0 }, aimVec = { x: 0, y: 0 };
 let gameOver = false;
 
-// ====== 방 + 통로 맵 생성 ======
-function genMap() {
-  const grid = 12, cell = 160;
-  const map = Array.from({length: grid}, ()=>Array(grid).fill(0));
-
-  // DFS 방식으로 연결된 방 만들기
-  function carve(x,y){
-    map[y][x]=1;
-    const dirs=[[1,0],[-1,0],[0,1],[0,-1]].sort(()=>Math.random()-0.5);
-    for(const [dx,dy] of dirs){
-      const nx=x+dx, ny=y+dy;
-      if(nx>=0&&ny>=0&&nx<grid&&ny<grid&&map[ny][nx]==0){
-        map[ny][nx]=1;
-        // 통로 생성 (벽이 비는 구간)
-        const mx=(x+nx)/2, my=(y+ny)/2;
-        if(map[my]) map[my][mx]=1;
-        carve(nx,ny);
-      }
-    }
-  }
-  carve(6,6);
-
-  for(let y=0;y<grid;y++){
-    for(let x=0;x<grid;x++){
-      const px = (x-grid/2)*cell;
-      const py = (y-grid/2)*cell;
-      if(!map[y][x]) walls.push({x:px, y:py, w:cell, h:cell});
+// ====== 벽 생성 (세로형 통로형 맵) ======
+const walls = [];
+const mapWidth = 1200, mapHeight = 3000;
+const cell = 100;
+for (let y = -mapHeight/2; y < mapHeight/2; y += cell) {
+  for (let x = -mapWidth/2; x < mapWidth/2; x += cell) {
+    // 확률적으로 벽 생성하되 세로 통로 유지
+    if (Math.random() < 0.25 && Math.abs(x) > 100) {
+      walls.push({x, y, w: cell-10, h: cell-10});
     }
   }
 }
-genMap();
 
 // ====== 조이스틱 ======
 function setupJoystick(id, callback) {
@@ -94,7 +73,6 @@ function setupJoystick(id, callback) {
       }
     }
   });
-
   joy.addEventListener('touchmove', e => {
     if (!active) return;
     for (const t of e.changedTouches) {
@@ -103,19 +81,17 @@ function setupJoystick(id, callback) {
         const dy = t.clientY - start.y;
         const dist = Math.min(40, Math.hypot(dx, dy));
         const ang = Math.atan2(dy, dx);
-        stick.style.left = 35 + dist * Math.cos(ang) + 'px';
-        stick.style.top = 35 + dist * Math.sin(ang) + 'px';
-        callback(Math.cos(ang) * dist/40, Math.sin(ang)*dist/40);
+        stick.style.left = 35 + dist*Math.cos(ang)+'px';
+        stick.style.top = 35 + dist*Math.sin(ang)+'px';
+        callback(Math.cos(ang)*dist/40, Math.sin(ang)*dist/40);
       }
     }
   });
-
   joy.addEventListener('touchend', e => {
     for (const t of e.changedTouches) {
       if (t.identifier === touchId) {
-        active = false;
-        touchId = null;
-        stick.style.left = '35px'; stick.style.top = '35px';
+        active = false; touchId=null;
+        stick.style.left='35px'; stick.style.top='35px';
         callback(0,0);
       }
     }
@@ -125,27 +101,32 @@ function setupJoystick(id, callback) {
 setupJoystick('moveJoy', (x,y)=>moveVec={x,y});
 setupJoystick('aimJoy', (x,y)=>aimVec={x,y});
 
-// ====== 벽 충돌 ======
-function collideCircleRect(obj, rect) {
-  const closestX = Math.max(rect.x-rect.w/2, Math.min(obj.x, rect.x+rect.w/2));
-  const closestY = Math.max(rect.y-rect.h/2, Math.min(obj.y, rect.y+rect.h/2));
-  const dx = obj.x - closestX;
-  const dy = obj.y - closestY;
-  return (dx*dx + dy*dy) < obj.r*obj.r;
+// ====== 충돌 체크 ======
+function collideCircleRect(c, r){
+  let testX = c.x, testY = c.y;
+  if (c.x < r.x - r.w/2) testX = r.x - r.w/2;
+  else if (c.x > r.x + r.w/2) testX = r.x + r.w/2;
+  if (c.y < r.y - r.h/2) testY = r.y - r.h/2;
+  else if (c.y > r.y + r.h/2) testY = r.y + r.h/2;
+  const distX = c.x - testX;
+  const distY = c.y - testY;
+  return (distX*distX + distY*distY) < (c.r*c.r);
 }
 
-// ====== 업데이트 ======
+// ====== 게임 업데이트 ======
 function update() {
   if (gameOver) return;
 
-  // 이동
   const speed = 3;
-  const newX = player.x + moveVec.x * speed;
-  const newY = player.y + moveVec.y * speed;
-  const test = {x: newX, y: newY, r: player.r};
-  if (!walls.some(w => collideCircleRect(test, w))) {
-    player.x = newX; player.y = newY;
+  const nextX = player.x + moveVec.x * speed;
+  const nextY = player.y + moveVec.y * speed;
+  let blocked = false;
+  for (const w of walls) {
+    if (collideCircleRect({x: nextX, y: nextY, r: player.r}, {x: w.x, y: w.y, w: w.w, h: w.h})) {
+      blocked = true; break;
+    }
   }
+  if (!blocked) { player.x = nextX; player.y = nextY; }
 
   // 플레이어 발사
   if ((aimVec.x || aimVec.y) && player.reload <= 0) {
@@ -154,87 +135,78 @@ function update() {
   }
   if (player.reload > 0) player.reload--;
 
-  // ====== 적 AI ======
-  const dx = player.x - enemy.x;
-  const dy = player.y - enemy.y;
+  // 적 AI
+  const dx = player.x - enemy.x, dy = player.y - enemy.y;
   const dist = Math.hypot(dx, dy);
-  const dirX = dx / dist, dirY = dy / dist;
-
-  // 벽에 막히면 다른 방향 탐색
-  let tryX = enemy.x + dirX * 1.2;
-  let tryY = enemy.y + dirY * 1.2;
-  const testE = {x: tryX, y: tryY, r: enemy.r};
-  if (walls.some(w => collideCircleRect(testE, w))) {
-    // 벽 피하기
-    const ang = Math.atan2(dy, dx) + (Math.random() > 0.5 ? Math.PI/2 : -Math.PI/2);
-    tryX = enemy.x + Math.cos(ang) * 2;
-    tryY = enemy.y + Math.sin(ang) * 2;
-    const t2 = {x:tryX,y:tryY,r:enemy.r};
-    if (!walls.some(w => collideCircleRect(t2, w))) {
-      enemy.x = tryX; enemy.y = tryY;
-    }
-  } else if (dist > 150) {
-    enemy.x = tryX; enemy.y = tryY;
+  const dirX = dx/dist, dirY = dy/dist;
+  if (dist > 150) {
+    const nx = enemy.x + dirX*2, ny = enemy.y + dirY*2;
+    let hitWall = false;
+    for (const w of walls)
+      if (collideCircleRect({x:nx,y:ny,r:enemy.r},{x:w.x,y:w.y,w:w.w,h:w.h})) hitWall=true;
+    if (!hitWall) { enemy.x = nx; enemy.y = ny; }
   }
 
   // 적 발사
-  if (enemy.reload <= 0 && dist < 500) {
-    eBullets.push({x: enemy.x, y: enemy.y, dx: dirX*6, dy: dirY*6});
-    enemy.reload = 50;
+  if (enemy.reload<=0 && dist<600){
+    eBullets.push({x:enemy.x,y:enemy.y,dx:dirX*6,dy:dirY*6});
+    enemy.reload=50;
   }
-  if (enemy.reload > 0) enemy.reload--;
+  if (enemy.reload>0) enemy.reload--;
 
-  // 총알 이동/충돌
+  // 총알 이동 + 벽 충돌
   for (const b of bullets) {
-    b.x += b.dx; b.y += b.dy;
-    if (hit(enemy, b, enemy.r)) { enemy.hp -= 10; b.dead = true; }
-    if (walls.some(w => collideRect(b, w))) b.dead = true;
+    b.x+=b.dx; b.y+=b.dy;
+    for (const w of walls) {
+      if (b.x>w.x-w.w/2 && b.x<w.x+w.w/2 && b.y>w.y-w.h/2 && b.y<w.y+w.h/2)
+        b.dead=true;
+    }
+    if ((b.x-enemy.x)**2+(b.y-enemy.y)**2<enemy.r**2){enemy.hp-=10;b.dead=true;}
   }
   for (const b of eBullets) {
-    b.x += b.dx; b.y += b.dy;
-    if (hit(player, b, player.r)) { player.hp -= 10; b.dead = true; }
-    if (walls.some(w => collideRect(b, w))) b.dead = true;
+    b.x+=b.dx; b.y+=b.dy;
+    for (const w of walls)
+      if (b.x>w.x-w.w/2 && b.x<w.x+w.w/2 && b.y>w.y-w.h/2 && b.y<w.y+w.h/2)
+        b.dead=true;
+    if ((b.x-player.x)**2+(b.y-player.y)**2<player.r**2){player.hp-=10;b.dead=true;}
   }
-
   bullets.splice(0, bullets.length, ...bullets.filter(b=>!b.dead));
   eBullets.splice(0, eBullets.length, ...eBullets.filter(b=>!b.dead));
 
-  if (player.hp <= 0 || enemy.hp <= 0) {
-    gameOver = true;
-    setTimeout(()=>alert(player.hp>0?"승리!":"패배..."), 300);
+  if (player.hp<=0||enemy.hp<=0){
+    gameOver=true;
+    setTimeout(()=>alert(player.hp>0?"승리!":"패배..."),500);
   }
 }
 
-function hit(a,b,r){ return (a.x-b.x)**2 + (a.y-b.y)**2 < r**2; }
-function collideRect(b,w){ 
-  return b.x > w.x-w.w/2 && b.x < w.x+w.w/2 && b.y > w.y-w.h/2 && b.y < w.y+w.h/2;
-}
-
-// ====== 렌더 ======
+// ====== 그리기 ======
 function draw() {
   ctx.clearRect(0,0,W,H);
   const camX = player.x, camY = player.y;
   ctx.save(); ctx.translate(W/2-camX,H/2-camY);
 
-  ctx.fillStyle="#444"; ctx.fillRect(-mapW/2, -mapH/2, mapW, mapH);
-  ctx.fillStyle="#666";
-  for (const w of walls) ctx.fillRect(w.x-w.w/2, w.y-w.h/2, w.w, w.h);
+  ctx.fillStyle="#333";
+  ctx.fillRect(-mapWidth/2,-mapHeight/2,mapWidth,mapHeight);
+
+  ctx.fillStyle="#444";
+  for (const w of walls) ctx.fillRect(w.x-w.w/2,w.y-w.h/2,w.w,w.h);
 
   ctx.fillStyle="yellow";
-  for (const b of bullets){ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();}
+  for (const b of bullets) ctx.beginPath(),ctx.arc(b.x,b.y,4,0,Math.PI*2),ctx.fill();
   ctx.fillStyle="red";
-  for (const b of eBullets){ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();}
+  for (const b of eBullets) ctx.beginPath(),ctx.arc(b.x,b.y,4,0,Math.PI*2),ctx.fill();
 
   ctx.fillStyle="red"; ctx.beginPath(); ctx.arc(enemy.x,enemy.y,enemy.r,0,Math.PI*2); ctx.fill();
   drawHp(enemy);
   ctx.fillStyle="lime"; ctx.beginPath(); ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
   drawHp(player);
+
   ctx.restore();
 }
 
 function drawHp(o){
-  ctx.fillStyle="black"; ctx.fillRect(o.x-20, o.y-30, 40, 6);
-  ctx.fillStyle="lime"; ctx.fillRect(o.x-20, o.y-30, 40*(o.hp/100), 6);
+  ctx.fillStyle="black"; ctx.fillRect(o.x-20,o.y-30,40,6);
+  ctx.fillStyle="lime"; ctx.fillRect(o.x-20,o.y-30,40*(o.hp/100),6);
 }
 
 function loop(){ update(); draw(); requestAnimationFrame(loop); }
