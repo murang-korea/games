@@ -1,20 +1,20 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Brawl Mini</title>
 <style>
-  body {margin:0;overflow:hidden;background:#111;touch-action:none;}
-  canvas {display:block;background:#222;}
-  .joystick {
-    position:fixed;width:120px;height:120px;
-    border-radius:50%;background:rgba(255,255,255,0.08);
-    border:2px solid rgba(255,255,255,0.2);touch-action:none;z-index:10;
-  }
-  .stick {position:absolute;width:50px;height:50px;background:rgba(255,255,255,0.3);border-radius:50%;left:35px;top:35px;}
-  #moveJoy {left:30px;bottom:30px;}
-  #aimJoy {right:30px;bottom:30px;}
+  html,body {height:100%;margin:0;background:#111;touch-action:none;overflow:hidden}
+  canvas {display:block;background:#222;width:100vw;height:100vh}
+  .joystick {position:fixed;width:120px;height:120px;border-radius:50%;
+    background:rgba(255,255,255,0.06);border:2px solid rgba(255,255,255,0.12);
+    z-index:20;touch-action:none}
+  .stick {position:absolute;width:50px;height:50px;border-radius:50%;
+    background:rgba(255,255,255,0.28);left:35px;top:35px}
+  #moveJoy{left:18px;bottom:18px} #aimJoy{right:18px;bottom:18px}
+  /* 작은 화면에서 조금 줄임 */
+  @media (max-width:420px){.joystick{width:100px;height:100px}.stick{width:42px;height:42px;left:29px;top:29px}}
 </style>
 </head>
 <body>
@@ -23,195 +23,335 @@
 <div id="aimJoy" class="joystick"><div class="stick"></div></div>
 
 <script>
-const canvas=document.getElementById('game');
-const ctx=canvas.getContext('2d');
-let W=innerWidth,H=innerHeight;
-canvas.width=W;canvas.height=H;
+/* -------------------------
+   Brawl Mini — improved AI
+   - obstacle avoidance by sampling angles
+   - retreat when close to player
+   ------------------------- */
 
-// ===== 기본 설정 =====
-const player={x:0,y:0,r:20,hp:100,reload:0};
-const enemy={x:400,y:-300,r:20,hp:100,reload:0,mode:"patrol",target:{x:400,y:-300},angle:0};
-const bullets=[],eBullets=[];
-let moveVec={x:0,y:0},aimVec={x:0,y:0};
-let gameOver=false;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = innerWidth, H = innerHeight;
+canvas.width = W; canvas.height = H;
 
-// ===== 맵 =====
-const mapWidth=1200,mapHeight=1800;
-const walls=[];
-const cell=100;
-for(let y=-mapHeight/2;y<mapHeight/2;y+=cell){
-  for(let x=-mapWidth/2;x<mapWidth/2;x+=cell){
-    if(Math.random()<0.25&&Math.abs(x)>100&&Math.abs(y)>150)
-      walls.push({x,y,w:cell-10,h:cell-10});
+// map size (fixed, limited area)
+const MAP_W = 1200, MAP_H = 2000;
+
+// player / enemy / bullets
+const player = { x: 0, y: 0, r: 20, hp: 100, reload:0 };
+const enemy  = { x: 200, y: -400, r: 20, hp: 100, reload:0, state:'patrol' };
+const bullets = [], eBullets = [];
+
+// walls (grid-ish but keep passages)
+const walls = [];
+const CELL = 100;
+for(let y = -MAP_H/2 + CELL/2; y < MAP_H/2; y += CELL){
+  for(let x = -MAP_W/2 + CELL/2; x < MAP_W/2; x += CELL){
+    // keep corridors: make central vertical corridor, some random walls
+    const inCentral = Math.abs(x) < CELL*1.2; // central corridor free
+    if(!inCentral && Math.random() < 0.26 && !(Math.abs(y) < 120 && Math.abs(x) < 200)){
+      walls.push({ x, y, w: CELL-10, h: CELL-10 });
+    }
   }
 }
 
-// ===== 조이스틱 =====
-function setupJoystick(id,cb){
-  const joy=document.getElementById(id);
-  const stick=joy.querySelector('.stick');
-  let active=false,touchId=null,start={x:0,y:0};
-  joy.addEventListener('touchstart',e=>{
-    for(const t of e.changedTouches){
-      if(!active){active=true;touchId=t.identifier;start.x=t.clientX;start.y=t.clientY;}
-    }
-  });
-  joy.addEventListener('touchmove',e=>{
-    if(!active)return;
-    for(const t of e.changedTouches){
-      if(t.identifier===touchId){
-        const dx=t.clientX-start.x,dy=t.clientY-start.y;
-        const dist=Math.min(40,Math.hypot(dx,dy));
-        const ang=Math.atan2(dy,dx);
-        stick.style.left=35+dist*Math.cos(ang)+'px';
-        stick.style.top=35+dist*Math.sin(ang)+'px';
-        cb(Math.cos(ang)*dist/40,Math.sin(ang)*dist/40);
-      }
-    }
-  });
-  joy.addEventListener('touchend',e=>{
-    for(const t of e.changedTouches){
-      if(t.identifier===touchId){
-        active=false;touchId=null;
-        stick.style.left='35px';stick.style.top='35px';
-        cb(0,0);
-      }
-    }
-  });
-}
-setupJoystick('moveJoy',(x,y)=>moveVec={x,y});
-setupJoystick('aimJoy',(x,y)=>aimVec={x,y});
+// input
+let moveVec = {x:0,y:0}, aimVec = {x:0,y:0};
 
-// ===== 유틸 =====
-function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
-function collideCircleRect(c,r){
-  let testX=c.x,testY=c.y;
-  if(c.x<r.x-r.w/2)testX=r.x-r.w/2;
-  else if(c.x>r.x+r.w/2)testX=r.x+r.w/2;
-  if(c.y<r.y-r.h/2)testY=r.y-r.h/2;
-  else if(c.y>r.y+r.h/2)testY=r.y+r.h/2;
-  const dx=c.x-testX,dy=c.y-testY;
-  return(dx*dx+dy*dy)<(c.r*c.r);
+// utils
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
+function circleRectColl(cx,cy,cr,rx,ry,rw,rh){
+  const testX = clamp(cx, rx - rw/2, rx + rw/2);
+  const testY = clamp(cy, ry - rh/2, ry + rh/2);
+  const dx = cx - testX, dy = cy - testY;
+  return dx*dx + dy*dy <= cr*cr;
 }
-function checkWall(x,y,r){
-  for(const w of walls)
-    if(collideCircleRect({x,y,r},w))return true;
+function pointInRect(px,py,rx,ry,rw,rh){
+  return px > rx-rw/2 && px < rx+rw/2 && py > ry-rh/2 && py < ry+rh/2;
+}
+
+/* joystick implementation (touch) */
+function setupJoystick(id, onMove){
+  const joy = document.getElementById(id);
+  const stick = joy.querySelector('.stick');
+  let active=false, tid=null, start={x:0,y:0};
+
+  joy.addEventListener('touchstart', e=>{
+    for(const t of e.changedTouches){
+      if(!active){ active=true; tid=t.identifier; start.x=t.clientX; start.y=t.clientY; }
+    }
+  }, {passive:false});
+
+  joy.addEventListener('touchmove', e=>{
+    if(!active) return;
+    for(const t of e.changedTouches){
+      if(t.identifier === tid){
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        const mag = Math.min(40, Math.hypot(dx,dy));
+        const ang = Math.atan2(dy,dx);
+        stick.style.left = 35 + mag*Math.cos(ang) + 'px';
+        stick.style.top  = 35 + mag*Math.sin(ang) + 'px';
+        onMove(Math.cos(ang)*(mag/40), Math.sin(ang)*(mag/40));
+      }
+    }
+    e.preventDefault();
+  }, {passive:false});
+
+  joy.addEventListener('touchend', e=>{
+    for(const t of e.changedTouches){
+      if(t.identifier === tid){
+        active=false; tid=null; stick.style.left='35px'; stick.style.top='35px';
+        onMove(0,0);
+      }
+    }
+  });
+}
+setupJoystick('moveJoy', (x,y)=> moveVec = {x,y});
+setupJoystick('aimJoy', (x,y)=> aimVec = {x,y});
+
+/* ---------- obstacle checking helpers ---------- */
+// check whether a circle at (x,y,r) collides any wall
+function collidesWall(x,y,r){
+  for(const w of walls){
+    if(circleRectColl(x,y,r,w.x,w.y,w.w,w.h)) return true;
+  }
+  return false;
+}
+// raycast: check along a short ray if there's wall (sampled)
+function rayHitsWall(x,y,dx,dy,step=6,limit=60){
+  let tx = x, ty = y;
+  for(let s=0; s<limit; s+=step){
+    tx += dx*step;
+    ty += dy*step;
+    if(tx < -MAP_W/2 || tx > MAP_W/2 || ty < -MAP_H/2 || ty > MAP_H/2) return true;
+    for(const w of walls) if(pointInRect(tx,ty,w.x,w.y,w.w,w.h)) return true;
+  }
   return false;
 }
 
-// ===== 업데이트 =====
-function update(){
-  if(gameOver)return;
-  const speed=3;
-  const nextX=player.x+moveVec.x*speed;
-  const nextY=player.y+moveVec.y*speed;
-  let block=false;
-  for(const w of walls)
-    if(collideCircleRect({x:nextX,y:nextY,r:player.r},w))block=true;
-  if(!block){
-    player.x=clamp(nextX,-mapWidth/2+player.r,mapWidth/2-player.r);
-    player.y=clamp(nextY,-mapHeight/2+player.r,mapHeight/2-player.r);
+/* ---------- enemy steering with avoidance & retreat ---------- */
+function enemyStep(){
+  const toPlayerX = player.x - enemy.x;
+  const toPlayerY = player.y - enemy.y;
+  const dToPlayer = Math.hypot(toPlayerX, toPlayerY);
+
+  const retreatDist = 140;   // 플레이어가 이 거리 안으로 들어오면 적은 후퇴 우선
+  const sightDist = 520;     // 플레이어 감지 거리
+
+  // decide desired direction
+  let desiredAngle;
+  let mode = enemy.state;
+
+  // ----- Retreat behavior -----
+  if(dToPlayer <= retreatDist){
+    // move away from player
+    desiredAngle = Math.atan2(enemy.y - player.y, enemy.x - player.x); // opposite direction
+    mode = 'retreat';
+  } else if(dToPlayer <= sightDist){
+    // if can "see" player (rough check: ray between enemy and player not hitting wall)
+    const midX = (enemy.x + player.x)/2;
+    const midY = (enemy.y + player.y)/2;
+    const blocked = collidesWall(midX, midY, enemy.r*0.8);
+    if(!blocked){
+      desiredAngle = Math.atan2(toPlayerY, toPlayerX);
+      mode = 'chase';
+    } else {
+      // if blocked, fallback to patrol target
+      mode = 'search';
+    }
+  } else {
+    mode = 'patrol';
   }
 
-  // ===== 플레이어 공격 =====
-  if((aimVec.x||aimVec.y)&&player.reload<=0){
-    bullets.push({x:player.x,y:player.y,dx:aimVec.x*8,dy:aimVec.y*8});
-    player.reload=20;
+  // ----- patrol/search mode: roam/random target -----
+  if(mode === 'patrol' || mode === 'search'){
+    if(!enemy.target || Math.hypot(enemy.target.x - enemy.x, enemy.target.y - enemy.y) < 30){
+      // choose a random reachable point (biased toward player to keep action)
+      const rx = clamp(player.x + (Math.random()-0.5)*700, -MAP_W/2+50, MAP_W/2-50);
+      const ry = clamp(player.y + (Math.random()-0.5)*900, -MAP_H/2+50, MAP_H/2-50);
+      enemy.target = { x: rx, y: ry };
+    }
+    desiredAngle = Math.atan2(enemy.target.y - enemy.y, enemy.target.x - enemy.x);
   }
-  if(player.reload>0)player.reload--;
 
-  // ====== 적 AI ======
-  const dx=player.x-enemy.x,dy=player.y-enemy.y;
-  const dist=Math.hypot(dx,dy);
-  const speedE=2;
-
-  // 플레이어 감지
-  const canSee=!checkWall(enemy.x+dx/2,enemy.y+dy/2,enemy.r)&&dist<500;
-  if(canSee){enemy.mode="chase";enemy.target={x:player.x,y:player.y};}
-  else if(enemy.mode==="chase")enemy.mode="patrol";
-
-  if(enemy.mode==="patrol"){
-    if(Math.hypot(enemy.x-enemy.target.x,enemy.y-enemy.target.y)<20){
-      // 랜덤 위치로 이동
-      enemy.target.x=enemy.x+(Math.random()-0.5)*600;
-      enemy.target.y=enemy.y+(Math.random()-0.5)*600;
+  // ----- obstacle avoidance by sampling alternative angles -----
+  // try desiredAngle first, if rayHitsWall -> sample offsets (±20°, ±40°, ±60°, ...)
+  const MAX_SAMPLE = 8;
+  const ANG_STEP = Math.PI/12; // 15deg
+  let chosen = null;
+  const tryDirs = [0];
+  for(let i=1;i<=MAX_SAMPLE;i++){
+    tryDirs.push(i, -i);
+  }
+  for(const dirIdx of tryDirs){
+    const ang = desiredAngle + dirIdx * ANG_STEP;
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    // rayHitsWall: check short lookahead to see if path is blocked
+    const blocked = rayHitsWall(enemy.x, enemy.y, dx, dy, 6, 64);
+    if(!blocked){
+      chosen = ang;
+      break;
     }
   }
-
-  const tx=enemy.target.x,ty=enemy.target.y;
-  let ang=Math.atan2(ty-enemy.y,tx-enemy.x);
-  const nx=enemy.x+Math.cos(ang)*speedE;
-  const ny=enemy.y+Math.sin(ang)*speedE;
-
-  if(!checkWall(nx,ny,enemy.r)){
-    enemy.x=nx;enemy.y=ny;enemy.angle=ang;
-  }else{
-    // 벽 충돌 시 방향 살짝 틀기
-    enemy.angle+=((Math.random()<0.5)?1:-1)*(Math.PI/4);
+  if(chosen === null){
+    // all blocked — pick random angle
+    chosen = Math.random()*Math.PI*2;
   }
 
-  enemy.x=clamp(enemy.x,-mapWidth/2+enemy.r,mapWidth/2-enemy.r);
-  enemy.y=clamp(enemy.y,-mapHeight/2+enemy.r,mapHeight/2-enemy.r);
-
-  // ===== 적 공격 =====
-  if(enemy.mode==="chase"&&enemy.reload<=0&&dist<500){
-    eBullets.push({x:enemy.x,y:enemy.y,dx:(dx/dist)*6,dy:(dy/dist)*6});
-    enemy.reload=50;
+  // move enemy along chosen direction but check final collision
+  const speed = (mode === 'retreat') ? 2.2 : (mode === 'chase' ? 2.0 : 1.6);
+  const nx = enemy.x + Math.cos(chosen) * speed;
+  const ny = enemy.y + Math.sin(chosen) * speed;
+  if(!collidesWall(nx, ny, enemy.r)){
+    enemy.x = clamp(nx, -MAP_W/2 + enemy.r, MAP_W/2 - enemy.r);
+    enemy.y = clamp(ny, -MAP_H/2 + enemy.r, MAP_H/2 - enemy.r);
+    enemy.state = mode;
+  } else {
+    // if collided unexpectedly, jitter a bit
+    enemy.x += (Math.random()-0.5)*6;
+    enemy.y += (Math.random()-0.5)*6;
   }
-  if(enemy.reload>0)enemy.reload--;
 
-  moveBullets(bullets,enemy);
-  moveBullets(eBullets,player);
-
-  if(player.hp<=0||enemy.hp<=0){
-    gameOver=true;
-    setTimeout(()=>alert(player.hp>0?"승리!":"패배..."),300);
+  // firing: only when chasing (or peek) and with a cooldown
+  if(enemy.reload <= 0 && (mode === 'chase' || mode === 'retreat')){
+    // shoot toward predicted player position (simple)
+    const predX = player.x + (player.dx||0)*6 || player.x;
+    const predY = player.y + (player.dy||0)*6 || player.y;
+    const vx = predX - enemy.x, vy = predY - enemy.y;
+    const L = Math.hypot(vx,vy) || 1;
+    // ensure there's a clear little ray before firing (don't shoot through immediate wall)
+    if(!rayHitsWall(enemy.x, enemy.y, vx/L, vy/L, 6, 40)){
+      eBullets.push({ x: enemy.x, y: enemy.y, dx: (vx/L)*6, dy: (vy/L)*6 });
+      enemy.reload = 45; // cooldown
+    } else {
+      // if cannot shoot, give small cooldown to avoid spam
+      enemy.reload = 12;
+    }
   }
+  if(enemy.reload > 0) enemy.reload--;
 }
 
-function moveBullets(arr,target){
+/* ---------- physics for bullets ---------- */
+function moveBullets(arr, target){
   for(const b of arr){
-    b.x+=b.dx;b.y+=b.dy;
-    for(const w of walls)
-      if(b.x>w.x-w.w/2&&b.x<w.x+w.w/2&&b.y>w.y-w.h/2&&b.y<w.y+w.h/2)b.dead=true;
-    if((b.x-target.x)**2+(b.y-target.y)**2<target.r**2){
-      target.hp-=10;b.dead=true;
+    b.x += b.dx; b.y += b.dy;
+    // map bounds
+    if(b.x < -MAP_W/2 || b.x > MAP_W/2 || b.y < -MAP_H/2 || b.y > MAP_H/2){ b.dead = true; continue; }
+    // wall collision (bullet inside rect)
+    for(const w of walls){
+      if(pointInRect(b.x, b.y, w.x, w.y, w.w, w.h)){ b.dead = true; break; }
     }
-    if(b.x<-mapWidth/2||b.x>mapWidth/2||b.y<-mapHeight/2||b.y>mapHeight/2)
-      b.dead=true;
+    // hit target
+    if(!b.dead && dist(b.x,b.y, target.x, target.y) < target.r + 3){
+      target.hp -= 10;
+      b.dead = true;
+    }
   }
-  arr.splice(0,arr.length,...arr.filter(b=>!b.dead));
+  // keep alive bullets only
+  for(let i = arr.length-1; i>=0; i--) if(arr[i].dead) arr.splice(i,1);
 }
 
-// ===== 그리기 =====
+/* ---------- main update & draw ---------- */
+function update(){
+  // player movement (moveVec from joystick)
+  const speed = 3.0;
+  player.x += moveVec.x * speed;
+  player.y += moveVec.y * speed;
+  player.x = clamp(player.x, -MAP_W/2 + player.r, MAP_W/2 - player.r);
+  player.y = clamp(player.y, -MAP_H/2 + player.r, MAP_H/2 - player.r);
+
+  // firing (aimVec)
+  if((Math.abs(aimVec.x) > 0.05 || Math.abs(aimVec.y) > 0.05) && player.reload <= 0){
+    const L = Math.hypot(aimVec.x, aimVec.y) || 1;
+    bullets.push({ x: player.x, y: player.y, dx: (aimVec.x/L)*9, dy: (aimVec.y/L)*9 });
+    player.reload = 16;
+  }
+  if(player.reload > 0) player.reload--;
+
+  // track small velocity hint (for enemy prediction)
+  player.dx = (moveVec.x || 0) * speed;
+  player.dy = (moveVec.y || 0) * speed;
+
+  // enemy logic step
+  enemyStep();
+
+  // bullets
+  moveBullets(bullets, enemy);
+  moveBullets(eBullets, player);
+
+  // end conditions
+  if(player.hp <= 0 || enemy.hp <= 0){
+    const win = player.hp > 0;
+    setTimeout(()=> alert(win ? "승리!" : "패배..."), 80);
+    // freeze updates (but still drawn)
+    stopped = true;
+  }
+}
+
 function draw(){
   ctx.clearRect(0,0,W,H);
-  const camX=player.x,camY=player.y;
-  ctx.save();ctx.translate(W/2-camX,H/2-camY);
-  ctx.fillStyle="#333";
-  ctx.fillRect(-mapWidth/2,-mapHeight/2,mapWidth,mapHeight);
-  ctx.fillStyle="#444";
-  for(const w of walls)ctx.fillRect(w.x-w.w/2,w.y-w.h/2,w.w,w.h);
-  ctx.fillStyle="yellow";
-  for(const b of bullets){ctx.beginPath();ctx.arc(b.x,b.y,4,0,Math.PI*2);ctx.fill();}
-  ctx.fillStyle="red";
-  for(const b of eBullets){ctx.beginPath();ctx.arc(b.x,b.y,4,0,Math.PI*2);ctx.fill();}
-  ctx.fillStyle="red";ctx.beginPath();ctx.arc(enemy.x,enemy.y,enemy.r,0,Math.PI*2);ctx.fill();
-  drawHp(enemy);
-  ctx.fillStyle="lime";ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
-  drawHp(player);
+  // camera centered on player
+  const camX = player.x, camY = player.y;
+  ctx.save();
+  ctx.translate(W/2 - camX, H/2 - camY);
+
+  // background floor
+  ctx.fillStyle = '#2e2e2e';
+  ctx.fillRect(-MAP_W/2, -MAP_H/2, MAP_W, MAP_H);
+
+  // walls
+  ctx.fillStyle = '#4a4a4a';
+  for(const w of walls){
+    ctx.fillRect(w.x - w.w/2, w.y - w.h/2, w.w, w.h);
+  }
+
+  // bullets
+  ctx.fillStyle = '#f7e26b';
+  for(const b of bullets){ ctx.beginPath(); ctx.arc(b.x, b.y, 4,0,Math.PI*2); ctx.fill(); }
+  ctx.fillStyle = '#ff8a8a';
+  for(const b of eBullets){ ctx.beginPath(); ctx.arc(b.x, b.y, 4,0,Math.PI*2); ctx.fill(); }
+
+  // enemy
+  ctx.fillStyle = '#e04a4a';
+  ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.r,0,Math.PI*2); ctx.fill();
+  // enemy HP above
+  ctx.fillStyle = '#000'; ctx.fillRect(enemy.x-24, enemy.y - enemy.r - 18, 48, 8);
+  ctx.fillStyle = '#76ff6b'; ctx.fillRect(enemy.x-24, enemy.y - enemy.r - 18, 48 * Math.max(0, enemy.hp)/100, 8);
+
+  // player
+  ctx.fillStyle = '#6bffb1';
+  ctx.beginPath(); ctx.arc(player.x, player.y, player.r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000'; ctx.fillRect(player.x-24, player.y - player.r - 18, 48, 8);
+  ctx.fillStyle = '#76ff6b'; ctx.fillRect(player.x-24, player.y - player.r - 18, 48 * Math.max(0, player.hp)/100, 8);
+
   ctx.restore();
+
+  // HUD (cooldowns)
+  // optional: show enemy state
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Enemy: ' + enemy.state, 12, 20);
 }
 
-function drawHp(o){
-  ctx.fillStyle="black";ctx.fillRect(o.x-20,o.y-30,40,6);
-  ctx.fillStyle="lime";ctx.fillRect(o.x-20,o.y-30,40*(o.hp/100),6);
+let stopped = false;
+function loop(){
+  if(!stopped){ update(); }
+  draw();
+  requestAnimationFrame(loop);
 }
-
-function loop(){update();draw();requestAnimationFrame(loop);}
 loop();
 
-window.addEventListener('resize',()=>{W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;});
+// adapt size
+window.addEventListener('resize', ()=>{
+  W = innerWidth; H = innerHeight;
+  canvas.width = W; canvas.height = H;
+});
+
+/* expose simple functions for debug / controls if needed */
+window._state = () => ({ player, enemy, wallsLength: walls.length, bullets: bullets.length });
+
 </script>
 </body>
 </html>
