@@ -5,25 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Brawl Mini</title>
 <style>
-  body { margin:0; overflow:hidden; background:#111; touch-action:none; }
-  canvas { display:block; background:#222; }
+  body {margin:0;overflow:hidden;background:#111;touch-action:none;}
+  canvas {display:block;background:#222;}
   .joystick {
-    position:fixed;
-    width:120px; height:120px;
-    border-radius:50%;
-    background:rgba(255,255,255,0.08);
-    border:2px solid rgba(255,255,255,0.2);
-    touch-action:none; z-index:10;
+    position:fixed;width:120px;height:120px;
+    border-radius:50%;background:rgba(255,255,255,0.08);
+    border:2px solid rgba(255,255,255,0.2);touch-action:none;z-index:10;
   }
-  .stick {
-    position:absolute;
-    width:50px; height:50px;
-    background:rgba(255,255,255,0.3);
-    border-radius:50%;
-    left:35px; top:35px;
-  }
-  #moveJoy { left:30px; bottom:30px; }
-  #aimJoy { right:30px; bottom:30px; }
+  .stick {position:absolute;width:50px;height:50px;background:rgba(255,255,255,0.3);border-radius:50%;left:35px;top:35px;}
+  #moveJoy {left:30px;bottom:30px;}
+  #aimJoy {right:30px;bottom:30px;}
 </style>
 </head>
 <body>
@@ -37,25 +28,25 @@ const ctx=canvas.getContext('2d');
 let W=innerWidth,H=innerHeight;
 canvas.width=W;canvas.height=H;
 
-// ====== 기본 설정 ======
+// ===== 기본 설정 =====
 const player={x:0,y:0,r:20,hp:100,reload:0};
-const enemy={x:300,y:-400,r:20,hp:100,reload:0,angle:0,avoid:false,avoidTimer:0};
+const enemy={x:400,y:-300,r:20,hp:100,reload:0,mode:"patrol",target:{x:400,y:-300},angle:0};
 const bullets=[],eBullets=[];
 let moveVec={x:0,y:0},aimVec={x:0,y:0};
 let gameOver=false;
 
-// ====== 맵 생성 ======
+// ===== 맵 =====
 const mapWidth=1200,mapHeight=1800;
 const walls=[];
 const cell=100;
 for(let y=-mapHeight/2;y<mapHeight/2;y+=cell){
   for(let x=-mapWidth/2;x<mapWidth/2;x+=cell){
-    if(Math.random()<0.25&&Math.abs(x)>100&&Math.abs(y)>200)
+    if(Math.random()<0.25&&Math.abs(x)>100&&Math.abs(y)>150)
       walls.push({x,y,w:cell-10,h:cell-10});
   }
 }
 
-// ====== 조이스틱 ======
+// ===== 조이스틱 =====
 function setupJoystick(id,cb){
   const joy=document.getElementById(id);
   const stick=joy.querySelector('.stick');
@@ -91,7 +82,8 @@ function setupJoystick(id,cb){
 setupJoystick('moveJoy',(x,y)=>moveVec={x,y});
 setupJoystick('aimJoy',(x,y)=>aimVec={x,y});
 
-// ====== 충돌 ======
+// ===== 유틸 =====
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 function collideCircleRect(c,r){
   let testX=c.x,testY=c.y;
   if(c.x<r.x-r.w/2)testX=r.x-r.w/2;
@@ -101,14 +93,13 @@ function collideCircleRect(c,r){
   const dx=c.x-testX,dy=c.y-testY;
   return(dx*dx+dy*dy)<(c.r*c.r);
 }
-
-function checkWall(x,y){
+function checkWall(x,y,r){
   for(const w of walls)
-    if(collideCircleRect({x,y,r:enemy.r},w))return true;
+    if(collideCircleRect({x,y,r},w))return true;
   return false;
 }
 
-// ====== 업데이트 ======
+// ===== 업데이트 =====
 function update(){
   if(gameOver)return;
   const speed=3;
@@ -122,7 +113,7 @@ function update(){
     player.y=clamp(nextY,-mapHeight/2+player.r,mapHeight/2-player.r);
   }
 
-  // ====== 발사 ======
+  // ===== 플레이어 공격 =====
   if((aimVec.x||aimVec.y)&&player.reload<=0){
     bullets.push({x:player.x,y:player.y,dx:aimVec.x*8,dy:aimVec.y*8});
     player.reload=20;
@@ -132,42 +123,43 @@ function update(){
   // ====== 적 AI ======
   const dx=player.x-enemy.x,dy=player.y-enemy.y;
   const dist=Math.hypot(dx,dy);
-  const moveSpeed=2;
+  const speedE=2;
 
-  if(enemy.avoid){ // 회피 중
-    enemy.avoidTimer--;
-    enemy.x+=Math.cos(enemy.angle)*moveSpeed;
-    enemy.y+=Math.sin(enemy.angle)*moveSpeed;
-    if(enemy.avoidTimer<=0)enemy.avoid=false;
-  } else {
-    let dirAngle=Math.atan2(dy,dx);
-    const testX=enemy.x+Math.cos(dirAngle)*40;
-    const testY=enemy.y+Math.sin(dirAngle)*40;
-    if(checkWall(testX,testY)){
-      // 벽 있으면 방향 꺾기
-      dirAngle+=Math.PI/2*(Math.random()<0.5?1:-1);
-      enemy.avoid=true;
-      enemy.avoidTimer=40+Math.random()*30;
-      enemy.angle=dirAngle;
-    } else {
-      enemy.angle=dirAngle;
-      enemy.x+=Math.cos(dirAngle)*moveSpeed;
-      enemy.y+=Math.sin(dirAngle)*moveSpeed;
+  // 플레이어 감지
+  const canSee=!checkWall(enemy.x+dx/2,enemy.y+dy/2,enemy.r)&&dist<500;
+  if(canSee){enemy.mode="chase";enemy.target={x:player.x,y:player.y};}
+  else if(enemy.mode==="chase")enemy.mode="patrol";
+
+  if(enemy.mode==="patrol"){
+    if(Math.hypot(enemy.x-enemy.target.x,enemy.y-enemy.target.y)<20){
+      // 랜덤 위치로 이동
+      enemy.target.x=enemy.x+(Math.random()-0.5)*600;
+      enemy.target.y=enemy.y+(Math.random()-0.5)*600;
     }
   }
 
-  // 맵 경계 제한
+  const tx=enemy.target.x,ty=enemy.target.y;
+  let ang=Math.atan2(ty-enemy.y,tx-enemy.x);
+  const nx=enemy.x+Math.cos(ang)*speedE;
+  const ny=enemy.y+Math.sin(ang)*speedE;
+
+  if(!checkWall(nx,ny,enemy.r)){
+    enemy.x=nx;enemy.y=ny;enemy.angle=ang;
+  }else{
+    // 벽 충돌 시 방향 살짝 틀기
+    enemy.angle+=((Math.random()<0.5)?1:-1)*(Math.PI/4);
+  }
+
   enemy.x=clamp(enemy.x,-mapWidth/2+enemy.r,mapWidth/2-enemy.r);
   enemy.y=clamp(enemy.y,-mapHeight/2+enemy.r,mapHeight/2-enemy.r);
 
-  // ====== 적 발사 ======
-  if(enemy.reload<=0&&dist<600){
+  // ===== 적 공격 =====
+  if(enemy.mode==="chase"&&enemy.reload<=0&&dist<500){
     eBullets.push({x:enemy.x,y:enemy.y,dx:(dx/dist)*6,dy:(dy/dist)*6});
     enemy.reload=50;
   }
   if(enemy.reload>0)enemy.reload--;
 
-  // ====== 총알 이동 및 충돌 ======
   moveBullets(bullets,enemy);
   moveBullets(eBullets,player);
 
@@ -191,9 +183,7 @@ function moveBullets(arr,target){
   arr.splice(0,arr.length,...arr.filter(b=>!b.dead));
 }
 
-function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
-
-// ====== 그리기 ======
+// ===== 그리기 =====
 function draw(){
   ctx.clearRect(0,0,W,H);
   const camX=player.x,camY=player.y;
