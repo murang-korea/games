@@ -47,23 +47,35 @@ const walls = [];
 let moveVec = { x: 0, y: 0 }, aimVec = { x: 0, y: 0 };
 let gameOver = false;
 
-// ====== 맵 자동 생성 (방 + 통로 구조) ======
+// ====== 방 + 통로 맵 생성 ======
 function genMap() {
-  const cell = 120;
-  for (let i = -mapW/2; i < mapW/2; i += cell) {
-    for (let j = -mapH/2; j < mapH/2; j += cell) {
-      const edge = i === -mapW/2 || j === -mapH/2 || i === mapW/2 - cell || j === mapH/2 - cell;
-      const open = Math.random() < 0.2;
-      if (edge || !open) {
-        walls.push({ x: i + cell/2, y: j + cell/2, w: 100, h: 100 });
+  const grid = 12, cell = 160;
+  const map = Array.from({length: grid}, ()=>Array(grid).fill(0));
+
+  // DFS 방식으로 연결된 방 만들기
+  function carve(x,y){
+    map[y][x]=1;
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]].sort(()=>Math.random()-0.5);
+    for(const [dx,dy] of dirs){
+      const nx=x+dx, ny=y+dy;
+      if(nx>=0&&ny>=0&&nx<grid&&ny<grid&&map[ny][nx]==0){
+        map[ny][nx]=1;
+        // 통로 생성 (벽이 비는 구간)
+        const mx=(x+nx)/2, my=(y+ny)/2;
+        if(map[my]) map[my][mx]=1;
+        carve(nx,ny);
       }
     }
   }
+  carve(6,6);
 
-  // 시작 지역과 중앙 통로 확보
-  walls.splice(0, walls.length, ...walls.filter(w => 
-    Math.hypot(w.x, w.y) > 250 && !(Math.abs(w.x) < 200 && Math.abs(w.y) < 200)
-  ));
+  for(let y=0;y<grid;y++){
+    for(let x=0;x<grid;x++){
+      const px = (x-grid/2)*cell;
+      const py = (y-grid/2)*cell;
+      if(!map[y][x]) walls.push({x:px, y:py, w:cell, h:cell});
+    }
+  }
 }
 genMap();
 
@@ -130,7 +142,6 @@ function update() {
   const speed = 3;
   const newX = player.x + moveVec.x * speed;
   const newY = player.y + moveVec.y * speed;
-
   const test = {x: newX, y: newY, r: player.r};
   if (!walls.some(w => collideCircleRect(test, w))) {
     player.x = newX; player.y = newY;
@@ -143,25 +154,37 @@ function update() {
   }
   if (player.reload > 0) player.reload--;
 
-  // 적 AI
-  const dx = player.x - enemy.x, dy = player.y - enemy.y, dist = Math.hypot(dx, dy);
-  const dirX = dx/dist, dirY = dy/dist;
+  // ====== 적 AI ======
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const dist = Math.hypot(dx, dy);
+  const dirX = dx / dist, dirY = dy / dist;
 
-  // 충돌 검사해서 피하기
-  const tryMove = {x: enemy.x + dirX * 1.2, y: enemy.y + dirY * 1.2, r: enemy.r};
-  if (!walls.some(w => collideCircleRect(tryMove, w)) && dist > 150) {
-    enemy.x = tryMove.x;
-    enemy.y = tryMove.y;
+  // 벽에 막히면 다른 방향 탐색
+  let tryX = enemy.x + dirX * 1.2;
+  let tryY = enemy.y + dirY * 1.2;
+  const testE = {x: tryX, y: tryY, r: enemy.r};
+  if (walls.some(w => collideCircleRect(testE, w))) {
+    // 벽 피하기
+    const ang = Math.atan2(dy, dx) + (Math.random() > 0.5 ? Math.PI/2 : -Math.PI/2);
+    tryX = enemy.x + Math.cos(ang) * 2;
+    tryY = enemy.y + Math.sin(ang) * 2;
+    const t2 = {x:tryX,y:tryY,r:enemy.r};
+    if (!walls.some(w => collideCircleRect(t2, w))) {
+      enemy.x = tryX; enemy.y = tryY;
+    }
+  } else if (dist > 150) {
+    enemy.x = tryX; enemy.y = tryY;
   }
 
   // 적 발사
-  if (enemy.reload <= 0) {
+  if (enemy.reload <= 0 && dist < 500) {
     eBullets.push({x: enemy.x, y: enemy.y, dx: dirX*6, dy: dirY*6});
     enemy.reload = 50;
   }
   if (enemy.reload > 0) enemy.reload--;
 
-  // 총알 이동 / 충돌
+  // 총알 이동/충돌
   for (const b of bullets) {
     b.x += b.dx; b.y += b.dy;
     if (hit(enemy, b, enemy.r)) { enemy.hp -= 10; b.dead = true; }
