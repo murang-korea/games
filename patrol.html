@@ -1,211 +1,214 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-</title>Patrol</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Patrol</title>
 <style>
-  :root{
-    --bg:#0f1724; --floor:#111827; --wall:#374151; --player:#34d399; --guard:#fb7185;
-    --fov: rgba(251,113,133,0.12);
+  :root {
+    --bg:#0f1724; --floor:#111827; --wall:#374151;
+    --player:#34d399; --guard:#fb7185;
   }
-  html,body{height:100%;margin:0;background:var(--bg);overflow:hidden;font-family:Inter,system-ui,Arial}
-  canvas{display:block;background:var(--floor);width:100vw;height:100vh}
+  html,body {margin:0;height:100%;background:var(--bg);overflow:hidden;}
+  canvas {display:block;width:100vw;height:100vh;background:var(--floor);}
   .joy-wrap{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:30}
-  .joystick {
-    width:120px;height:120px;border-radius:50%;
-    background:rgba(255,255,255,0.04);border:2px solid rgba(255,255,255,0.06);
-    position:relative;touch-action:none;
+  .joystick{width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.05);
+    border:2px solid rgba(255,255,255,0.08);position:relative;touch-action:none;}
+  .stick{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.25);
+    position:absolute;left:34px;top:34px;}
+  @media(max-width:420px){.joystick{width:96px;height:96px}.stick{width:44px;height:44px;left:26px;top:26px}}
+  #msg {
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    color:white;font-size:3rem;background:rgba(0,0,0,0.75);z-index:99;opacity:0;transition:opacity 0.6s;
   }
-  .stick {
-    width:52px;height:52px;border-radius:50%;
-    background:rgba(255,255,255,0.22);position:absolute;left:34px;top:34px;
-  }
-  .hud {
-    position:fixed;left:12px;top:12px;color:#fff;z-index:40;font-size:14px;
-  }
-  .center-msg{
-    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;
-    background:rgba(0,0,0,0.5);padding:14px 18px;border-radius:8px;z-index:50;text-align:center;
-  }
-  @media (max-width:420px){
-    .joystick{width:96px;height:96px}.stick{width:44px;height:44px;left:26px;top:26px}
-  }
+  #msg.show {opacity:1;}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-
-<div class="joy-wrap" aria-hidden="true">
-  <div id="joy" class="joystick"><div class="stick" id="stick"></div></div>
-</div>
-
-<div class="hud" id="hud">상태: 준비</div>
-<div id="msg" class="center-msg">탭해서 시작</div>
+<div id="msg">GAME OVER</div>
+<div class="joy-wrap"><div id="joy" class="joystick"><div id="stick" class="stick"></div></div></div>
 
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-let W = innerWidth, H = innerHeight;
-canvas.width = W; canvas.height = H;
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+let W=innerWidth,H=innerHeight;canvas.width=W;canvas.height=H;
 
-// ===== GAME STATE =====
-let state = "ready"; // ready | playing | gameover
-
-// ===== MAP =====
-const TILE=48, COLS=20, ROWS=14;
-const MAP_W=COLS*TILE, MAP_H=ROWS*TILE;
+const TILE=48,COLS=18,ROWS=12;
+const MAP_W=COLS*TILE,MAP_H=ROWS*TILE;
 let grid=[];
-function generateMap(){
-  grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
-  for(let x=0;x<COLS;x++){ grid[0][x]=1; grid[ROWS-1][x]=1; }
-  for(let y=0;y<ROWS;y++){ grid[y][0]=1; grid[y][COLS-1]=1; }
-  const blocks = [
-    {x:3,y:2,w:6,h:1},
-    {x:3,y:5,w:1,h:6},
-    {x:8,y:3,w:1,h:6},
-    {x:11,y:2,w:6,h:1},
-    {x:6,y:10,w:8,h:1},
-    {x:14,y:6,w:1,h:4},
-  ];
-  for(const b of blocks)
-    for(let yy=b.y;yy<b.y+b.h;yy++)
-      for(let xx=b.x;xx<b.x+b.w;xx++)
-        if(yy>=0&&yy<ROWS&&xx>=0&&xx<COLS) grid[yy][xx]=1;
+
+function genMap(){
+  grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  for(let x=0;x<COLS;x++){grid[0][x]=1;grid[ROWS-1][x]=1;}
+  for(let y=0;y<ROWS;y++){grid[y][0]=1;grid[y][COLS-1]=1;}
+  // 패턴 벽
+  for(let x=3;x<15;x++)grid[5][x]=1;
+  for(let y=2;y<8;y++)grid[y][9]=1;
 }
-generateMap();
+genMap();
 
-function tileToWorld(tx,ty){ return {x:tx*TILE+TILE/2-MAP_W/2, y:ty*TILE+TILE/2-MAP_H/2}; }
-function worldToTile(wx,wy){ return {tx:Math.floor((wx+MAP_W/2)/TILE), ty:Math.floor((wy+MAP_H/2)/TILE)}; }
+function w2t(wx,wy){return {tx:Math.floor((wx+MAP_W/2)/TILE),ty:Math.floor((wy+MAP_H/2)/TILE)};}
 
-// ===== PLAYER =====
-const player={x:0,y:0,r:14,speed:2.4};
-(()=>{
-  const start={tx:Math.floor(COLS/2),ty:Math.floor(ROWS/2)};
-  const w=tileToWorld(start.tx,start.ty);
-  player.x=w.x; player.y=w.y;
-})();
+const player={x:0,y:0,r:14,spd:2.4,dir:0,fov:120,range:240};
+const guard={x:180,y:-120,r:16,spd:1.4,dir:0,fov:100,range:240,chasing:false};
 
-// ===== GUARDS =====
-const guards=[
-  { waypoints:[{tx:4,ty:3},{tx:9,ty:3},{tx:9,ty:6},{tx:4,ty:6}], ti:0, x:0,y:0,speed:1.4,fov:90,range:220,state:'patrol',path:[],pathStep:0 },
-];
-for(const g of guards){ const w=tileToWorld(g.waypoints[0].tx,g.waypoints[0].ty); g.x=w.x; g.y=w.y; }
-
-// ===== COLLISION =====
-function collidesWallAtWorld(x,y,rad){
-  const tile = worldToTile(x,y);
+function collide(x,y,r){
+  const {tx,ty}=w2t(x,y);
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-    const tx=tile.tx+dx,ty=tile.ty+dy;
-    if(tx<0||tx>=COLS||ty<0||ty>=ROWS)continue;
-    if(grid[ty][tx]===1){
-      const w=tileToWorld(tx,ty);
-      const rx=w.x-TILE/2,ry=w.y-TILE/2;
-      const rw=TILE,rh=TILE;
-      const testX=Math.max(rx,Math.min(x,rx+rw));
-      const testY=Math.max(ry,Math.min(y,ry+rh));
+    const xx=tx+dx,yy=ty+dy;if(xx<0||yy<0||xx>=COLS||yy>=ROWS)continue;
+    if(grid[yy][xx]){
+      const wx=xx*TILE+TILE/2-MAP_W/2,wy=yy*TILE+TILE/2-MAP_H/2;
+      const rx=wx-TILE/2,ry=wy-TILE/2;
+      const testX=Math.max(rx,Math.min(x,rx+TILE));
+      const testY=Math.max(ry,Math.min(y,ry+TILE));
       const dx0=x-testX,dy0=y-testY;
-      if(dx0*dx0+dy0*dy0<rad*rad)return true;
+      if(dx0*dx0+dy0*dy0<r*r)return true;
     }
   }return false;
 }
 
-// ===== GUARD UPDATE =====
-function updateGuard(g){
-  if(g.state==='patrol'){
-    const wp=g.waypoints[g.ti];
-    const wpW=tileToWorld(wp.tx,wp.ty);
-    const vx=wpW.x-g.x,vy=wpW.y-g.y;
-    const d=Math.hypot(vx,vy);
-    if(d<6) g.ti=(g.ti+1)%g.waypoints.length;
-    else {
-      const nx=g.x+(vx/d)*g.speed;
-      const ny=g.y+(vy/d)*g.speed;
-      if(!collidesWallAtWorld(nx,ny,g.r)){ g.x=nx; g.y=ny; }
-    }
+function rayBlocked(ax,ay,bx,by,step=6){
+  const dx=bx-ax,dy=by-ay,L=Math.hypot(dx,dy);
+  const nx=dx/L,ny=dy/L;let t=0;
+  while(t<L){
+    const px=ax+nx*t,py=ay+ny*t;
+    const {tx,ty}=w2t(px,py);
+    if(tx>=0&&tx<COLS&&ty>=0&&ty<ROWS&&grid[ty][tx])return true;
+    t+=step;
   }
+  return false;
 }
 
-// ===== JOYSTICK =====
-const joy=document.getElementById('joy'), stick=document.getElementById('stick');
-let dragging=false,move={x:0,y:0};
-joy.addEventListener('touchstart',()=>dragging=true,{passive:false});
+function drawFOVMask(px,py,dir,fov,range){
+  // 전체 어둡게 → 시야 부분 밝게 마스크
+  const mask=ctx.createRadialGradient(px,py,0,px,py,range);
+  mask.addColorStop(0,'rgba(0,0,0,0)');
+  mask.addColorStop(1,'rgba(0,0,0,1)');
+  ctx.save();
+  ctx.beginPath();ctx.rect(-MAP_W/2,-MAP_H/2,MAP_W,MAP_H);
+  ctx.moveTo(px,py);
+  const rays=[];
+  const step=fov/60;
+  for(let a=-fov/2;a<=fov/2;a+=step){
+    const ang=(dir+a)*Math.PI/180;
+    let ex=px+Math.cos(ang)*range,ey=py+Math.sin(ang)*range;
+    for(let d=0;d<range;d+=6){
+      const xx=px+Math.cos(ang)*d,yy=py+Math.sin(ang)*d;
+      if(rayBlocked(px,py,xx,yy,4)){ex=xx;ey=yy;break;}
+    }
+    rays.push({x:ex,y:ey});
+  }
+  ctx.moveTo(px,py);
+  for(const p of rays)ctx.lineTo(p.x,p.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle=mask;
+  ctx.fillRect(-MAP_W/2,-MAP_H/2,MAP_W,MAP_H);
+  ctx.restore();
+}
+
+function drawGuardFOV(x,y,dir,fov,range){
+  const rays=[];const step=fov/50;
+  for(let a=-fov/2;a<=fov/2;a+=step){
+    const ang=(dir+a)*Math.PI/180;
+    let ex=x+Math.cos(ang)*range,ey=y+Math.sin(ang)*range;
+    for(let d=0;d<range;d+=6){
+      const px=x+Math.cos(ang)*d,py=y+Math.sin(ang)*d;
+      if(rayBlocked(x,y,px,py,4)){ex=px;ey=py;break;}
+    }
+    rays.push({x:ex,y:ey});
+  }
+  ctx.beginPath();ctx.moveTo(x,y);
+  for(const p of rays)ctx.lineTo(p.x,p.y);
+  ctx.closePath();ctx.fillStyle="rgba(251,113,133,0.15)";ctx.fill();
+}
+
+/* 조이스틱 */
+const joy=document.getElementById('joy'),stick=document.getElementById('stick');
+let move={x:0,y:0},drag=false;
+joy.addEventListener('touchstart',()=>drag=true,{passive:false});
 joy.addEventListener('touchmove',e=>{
-  if(!dragging)return;
-  const t=e.touches[0],rect=joy.getBoundingClientRect();
-  const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+  if(!drag)return;
+  const t=e.touches[0],r=joy.getBoundingClientRect();
+  const cx=r.left+r.width/2,cy=r.top+r.height/2;
   const dx=t.clientX-cx,dy=t.clientY-cy;
-  const dist=Math.min(Math.hypot(dx,dy),40);
+  const dist=Math.min(40,Math.hypot(dx,dy));
   const ang=Math.atan2(dy,dx);
   stick.style.transform=`translate(${Math.cos(ang)*dist}px,${Math.sin(ang)*dist}px)`;
   move.x=Math.cos(ang)*(dist/40);move.y=Math.sin(ang)*(dist/40);
+  player.dir=ang*180/Math.PI;
   e.preventDefault();
 },{passive:false});
-joy.addEventListener('touchend',()=>{dragging=false;stick.style.transform='translate(0,0)';move.x=0;move.y=0;});
+joy.addEventListener('touchend',()=>{drag=false;stick.style.transform='translate(0,0)';move={x:0,y:0};});
 
-// ===== GAME =====
-const hud=document.getElementById('hud'),msg=document.getElementById('msg');
-let detected=false;
-function showMsg(t){msg.innerText=t;msg.style.display='block';}
-function hideMsg(){msg.style.display='none';}
-function resetGame(){
-  detected=false;
-  state='ready';
-  hud.innerText='상태: 준비';
-  showMsg('탭해서 시작');
-}
-
+/* 게임 루프 */
+let gameOver=false;
 function update(){
-  if(state!=='playing')return;
-  if(detected)return;
+  if(gameOver)return;
+  const nx=player.x+move.x*player.spd,ny=player.y+move.y*player.spd;
+  if(!collide(nx,player.y,player.r))player.x=nx;
+  if(!collide(player.x,ny,player.r))player.y=ny;
 
-  // player movement
-  const spd=player.speed;
-  const nx=player.x+move.x*spd,ny=player.y+move.y*spd;
-  if(!collidesWallAtWorld(nx,player.y,player.r))player.x=nx;
-  if(!collidesWallAtWorld(player.x,ny,player.r))player.y=ny;
+  const dx=player.x-guard.x,dy=player.y-guard.y;
+  const dist=Math.hypot(dx,dy);
+  const angleToPlayer=Math.atan2(dy,dx)*180/Math.PI;
+  const diffAngle=((angleToPlayer-guard.dir+540)%360)-180;
 
-  for(const g of guards) updateGuard(g);
+  const seesPlayer = dist<guard.range && Math.abs(diffAngle)<guard.fov/2 && !rayBlocked(guard.x,guard.y,player.x,player.y);
+  
+  if(seesPlayer){
+    guard.chasing=true;
+    guard.spd=6; // 폭주
+    guard.dir=angleToPlayer;
+  } else {
+    guard.chasing=false;
+    guard.spd=1.2;
+    guard.dir+=0.5; // 회전 순찰
+  }
 
-  // detection simple radius
-  for(const g of guards){
-    const dx=player.x-g.x,dy=player.y-g.y;
-    if(Math.hypot(dx,dy)<100){ detected=true; state='gameover'; showMsg('발견됨! 탭해서 재시작'); }
+  const gx=guard.x+Math.cos(guard.dir*Math.PI/180)*guard.spd;
+  const gy=guard.y+Math.sin(guard.dir*Math.PI/180)*guard.spd;
+  if(!collide(gx,gy,guard.r)){guard.x=gx;guard.y=gy;}
+
+  // 충돌 체크 (닿으면 사망)
+  if(Math.hypot(player.x-guard.x,player.y-guard.y)<player.r+guard.r){
+    gameOver=true;
+    document.getElementById('msg').classList.add('show');
   }
 }
 
 function draw(){
   ctx.clearRect(0,0,W,H);
-  const camX=player.x,camY=player.y;
-  ctx.save();ctx.translate(W/2-camX,H/2-camY);
+  ctx.save();ctx.translate(W/2-player.x,H/2-player.y);
+  ctx.fillStyle="#1e293b";ctx.fillRect(-MAP_W/2,-MAP_H/2,MAP_W,MAP_H);
 
-  ctx.fillStyle='#1f2937';ctx.fillRect(-MAP_W/2,-MAP_H/2,MAP_W,MAP_H);
-  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(grid[y][x]===1){
-    const w=tileToWorld(x,y);
-    ctx.fillStyle='#374151';
-    ctx.fillRect(w.x-TILE/2,w.y-TILE/2,TILE,TILE);
+  // 벽
+  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+    if(grid[y][x]){
+      const wx=x*TILE+TILE/2-MAP_W/2,wy=y*TILE+TILE/2-MAP_H/2;
+      ctx.fillStyle="#374151";ctx.fillRect(wx-TILE/2,wy-TILE/2,TILE,TILE);
+    }
   }
 
-  // guards
-  for(const g of guards){
-    ctx.fillStyle='#ef4444';ctx.beginPath();ctx.arc(g.x,g.y,14,0,Math.PI*2);ctx.fill();
-  }
+  // 적 시야
+  drawGuardFOV(guard.x,guard.y,guard.dir,guard.fov,guard.range);
 
-  ctx.fillStyle='#34d399';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  // 적
+  ctx.fillStyle=guard.chasing?"#f87171":"#ef4444";
+  ctx.beginPath();ctx.arc(guard.x,guard.y,16,0,Math.PI*2);ctx.fill();
+
+  // 플레이어
+  ctx.fillStyle="#34d399";ctx.beginPath();ctx.arc(player.x,player.y,14,0,Math.PI*2);ctx.fill();
+
+  // 플레이어 시야 마스크
+  drawFOVMask(player.x,player.y,player.dir,player.fov,player.range);
 
   ctx.restore();
-  hud.innerText = (state==='ready')?'상태: 준비':(state==='playing'?'플레이 중':'발견됨!');
 }
 
-function loop(){update();draw();requestAnimationFrame(loop);} loop();
-
-window.addEventListener('touchstart',()=>{
-  if(state==='ready'){ state='playing'; hideMsg(); hud.innerText='플레이 중'; }
-  else if(state==='gameover'){ resetGame(); }
-});
-
+function loop(){update();draw();requestAnimationFrame(loop);}
+loop();
 window.addEventListener('resize',()=>{W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;});
-resetGame();
 </script>
 </body>
 </html>
