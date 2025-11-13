@@ -16,7 +16,7 @@
     z-index: 20;
   }
   #joystickBase {
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.1);
     width: 120px; height: 120px;
     left: 60px; bottom: 60px;
   }
@@ -31,7 +31,6 @@
 <canvas id="canvas"></canvas>
 <div id="hud">상태: 탐색 중</div>
 <div id="centerMsg"></div>
-
 <div id="joystickBase"></div>
 <div id="joystickStick"></div>
 
@@ -45,7 +44,7 @@ const TILE = 48, COLS = 36, ROWS = 26;
 const MAP_W = COLS*TILE, MAP_H = ROWS*TILE;
 let grid = [];
 
-const player = { x:0, y:0, r:14, spd:2.5, dir:0 };
+const player = { x:0, y:0, r:14, spd:2.8, dir:0 };
 const exit = { tx:0, ty:0, x:0, y:0 };
 const enemies = [];
 const ENEMY_COUNT = 3;
@@ -141,7 +140,7 @@ function resetGame(){
   hud.innerText='상태: 탐색 중';
 }
 
-// 🎮 가상 조이스틱
+// 🎮 조이스틱
 const base = document.getElementById('joystickBase');
 const stick = document.getElementById('joystickStick');
 let joyActive = false, joyCenter = {x:0,y:0}, joyVec = {x:0,y:0};
@@ -152,10 +151,12 @@ function setStickPos(x,y){
 }
 
 base.addEventListener('touchstart', e=>{
-  joyActive=true;
   const t=e.touches[0];
-  joyCenter={x:t.clientX, y:t.clientY};
-  setStickPos(joyCenter.x, joyCenter.y);
+  joyActive=true;
+  joyCenter={x:base.offsetLeft+60, y:base.offsetTop+60};
+  const dx=t.clientX-joyCenter.x;
+  const dy=t.clientY-joyCenter.y;
+  setStickPos(joyCenter.x+dx, joyCenter.y+dy);
 });
 
 base.addEventListener('touchmove', e=>{
@@ -184,6 +185,7 @@ function update(){
   if(keys['s']||keys['arrowdown']) my=1;
   if(keys['a']||keys['arrowleft']) mx=-1;
   if(keys['d']||keys['arrowright']) mx=1;
+
   const mag = Math.hypot(mx,my);
   if(mag>0){ mx/=mag; my/=mag; player.dir=Math.atan2(my,mx); }
 
@@ -225,6 +227,7 @@ function draw(){
   ctx.beginPath();
   ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
   ctx.fill();
+
   ctx.strokeStyle='rgba(255,255,255,0.3)';
   ctx.beginPath();
   ctx.moveTo(player.x,player.y);
@@ -249,6 +252,13 @@ function draw(){
   });
 
   ctx.restore();
+
+  // 💡 어두운 시야 효과
+  const grad = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,100);
+  grad.addColorStop(0,"rgba(0,0,0,0)");
+  grad.addColorStop(1,"rgba(0,0,0,0.90)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
 }
 
 function loop(){
