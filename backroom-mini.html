@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<title>Backroom-mini</title>
+<style>
+  :root {
+    --bg: #0b0d0f; --floor:#14181b; --wall:#323b40;
+    --player:#33e3a1; --enemy:#ff4444;
+  }
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);touch-action:none;}
+  canvas{width:100vw;height:100vh;display:block;background:var(--floor);}
+  .joystick{
+    position:fixed;left:16px;bottom:16px;width:120px;height:120px;
+    border-radius:50%;background:rgba(255,255,255,0.05);
+    border:2px solid rgba(255,255,255,0.08);touch-action:none;z-index:10;
+  }
+  .stick{
+    position:absolute;left:34px;top:34px;width:52px;height:52px;
+    border-radius:50%;background:rgba(255,255,255,0.3);
+    transition:transform .05s;
+  }
+  #msg{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:28px;color:white;text-align:center;background:rgba(0,0,0,0.7);
+    opacity:0;transition:opacity .3s;z-index:20;pointer-events:none;
+  }
+  #msg.show{opacity:1;pointer-events:auto;}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div class="joystick" id="joy"><div class="stick" id="stick"></div></div>
+<div id="msg">잡혔다...<br><small>탭해서 다시 시작</small></div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d",{alpha:false});
+let W=innerWidth,H=innerHeight;canvas.width=W;canvas.height=H;
+
+/* ====== MAP ====== */
+const TILE=48, COLS=18, ROWS=12;
+let grid=[]; // 0 free, 1 wall
+function genMap(){
+  grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  for(let x=0;x<COLS;x++){grid[0][x]=1;grid[ROWS-1][x]=1;}
+  for(let y=0;y<ROWS;y++){grid[y][0]=1;grid[y][COLS-1]=1;}
+  for(let y=1;y<ROWS-1;y++){
+    for(let x=1;x<COLS-1;x++){
+      if(Math.random()<0.18)grid[y][x]=1;
+    }
+  }
+}
+function tileToWorld(tx,ty){return {x:tx*TILE+TILE/2,y:ty*TILE+TILE/2}}
+function worldToTile(x,y){return {tx:Math.floor(x/TILE),ty:Math.floor(y/TILE)}}
+function collidesAt(x,y,r){
+  const {tx,ty}=worldToTile(x,y);
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    const nx=tx+dx,ny=ty+dy;
+    if(nx<0||ny<0||nx>=COLS||ny>=ROWS)continue;
+    if(grid[ny][nx]===1){
+      const rx=nx*TILE,ry=ny*TILE;
+      const cx=Math.max(rx,Math.min(x,rx+TILE));
+      const cy=Math.max(ry,Math.min(y,ry+TILE));
+      if((x-cx)**2+(y-cy)**2<r*r)return true;
+    }
+  }
+  return false;
+}
+
+/* ====== ENTITIES ====== */
+const player={x:0,y:0,r:14,spd:2.6,dir:-90,fov:100,range:220};
+const enemy={x:0,y:0,r:16,spd:1.5,dir:0,fov:120,range:240,chasing:false};
+function safeSpawn(ent){
+  for(let i=0;i<500;i++){
+    const tx=Math.floor(Math.random()*(COLS-2))+1;
+    const ty=Math.floor(Math.random()*(ROWS-2))+1;
+    if(grid[ty][tx]===0){
+      const {x,y}=tileToWorld(tx,ty);
+      if(!collidesAt(x,y,ent.r))return {x,y};
+    }
+  }
+  return {x:TILE*2,y:TILE*2};
+}
+
+/* ====== JOYSTICK ====== */
+const joy=document.getElementById("joy"),stick=document.getElementById("stick");
+let move={x:0,y:0},drag=false;
+joy.addEventListener("touchstart",()=>drag=true);
+joy.addEventListener("touchmove",e=>{
+  if(!drag)return;
+  const t=e.touches[0],r=joy.getBoundingClientRect();
+  const cx=r.left+r.width/2,cy=r.top+r.height/2;
+  const dx=t.clientX-cx,dy=t.clientY-cy;
+  const dist=Math.min(Math.hypot(dx,dy),40);
+  const a=Math.atan2(dy,dx);
+  stick.style.transform=`translate(${Math.cos(a)*dist}px,${Math.sin(a)*dist}px)`;
+  move.x=Math.cos(a)*(dist/40);move.y=Math.sin(a)*(dist/40);
+  player.dir=a*180/Math.PI;
+  e.preventDefault();
+});
+joy.addEventListener("touchend",()=>{drag=false;stick.style.transform="translate(0,0)";move={x:0,y:0}});
+
+/* ====== GAME STATE ====== */
+let over=false,frame=0;
+function reset(){
+  over=false;
+  genMap();
+  let p=safeSpawn(player);player.x=p.x;player.y=p.y;
+  let e;
+  do{e=safeSpawn(enemy);}while(Math.hypot(e.x-p.x,e.y-p.y)<TILE*5);
+  enemy.x=e.x;enemy.y=e.y;enemy.chasing=false;
+  document.getElementById("msg").classList.remove("show");
+}
+
+/* ====== RAY & VISION ====== */
+function rayBlocked(ax,ay,bx,by,step=6){
+  const dx=bx-ax,dy=by-ay,L=Math.hypot(dx,dy);
+  const nx=dx/L,ny=dy/L;
+  for(let t=0;t<L;t+=step){
+    const px=ax+nx*t,py=ay+ny*t;
+    const {tx,ty}=worldToTile(px,py);
+    if(grid[ty]?.[tx]===1)return true;
+  }
+  return false;
+}
+
+/* ====== UPDATE ====== */
+function update(){
+  if(over)return;
+  const nx=player.x+move.x*player.spd,ny=player.y+move.y*player.spd;
+  if(!collidesAt(nx,player.y,player.r))player.x=nx;
+  if(!collidesAt(player.x,ny,player.r))player.y=ny;
+  // enemy
+  const dx=player.x-enemy.x,dy=player.y-enemy.y,dist=Math.hypot(dx,dy);
+  const aToP=Math.atan2(dy,dx)*180/Math.PI;
+  const angDiff=Math.abs(((aToP-enemy.dir+540)%360)-180);
+  const sees=dist<enemy.range&&angDiff<enemy.fov/2&&!rayBlocked(enemy.x,enemy.y,player.x,player.y,6);
+  if(sees){
+    enemy.chasing=true;enemy.spd=4;enemy.dir=aToP;
+    const rad=aToP*Math.PI/180;
+    const ex=enemy.x+Math.cos(rad)*enemy.spd,ey=enemy.y+Math.sin(rad)*enemy.spd;
+    if(!collidesAt(ex,ey,enemy.r)){enemy.x=ex;enemy.y=ey;}
+  }else{
+    enemy.chasing=false;enemy.spd=1.2;
+    if(frame%30===0)enemy.dir=Math.random()*360;
+    const rad=enemy.dir*Math.PI/180;
+    const ex=enemy.x+Math.cos(rad)*enemy.spd,ey=enemy.y+Math.sin(rad)*enemy.spd;
+    if(!collidesAt(ex,ey,enemy.r)){enemy.x=ex;enemy.y=ey;}
+    else enemy.dir+=180;
+  }
+  if(Math.hypot(player.x-enemy.x,player.y-enemy.y)<player.r+enemy.r){
+    over=true;document.getElementById("msg").classList.add("show");
+  }
+}
+
+/* ====== DRAW ====== */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const camX=W/2-player.x,camY=H/2-player.y;
+  ctx.save();ctx.translate(camX,camY);
+  // draw floor + wall
+  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+    if(grid[y][x]===1){ctx.fillStyle=varWall;ctx.fillStyle="#323b40";ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+  }
+  // enemy
+  ctx.fillStyle=enemy.chasing?"#ff7777":"#ff4444";
+  ctx.beginPath();ctx.arc(enemy.x,enemy.y,enemy.r,0,Math.PI*2);ctx.fill();
+  // player
+  ctx.fillStyle="#33e3a1";ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  // dark overlay with player FOV
+  ctx.fillStyle="rgba(0,0,0,0.93)";
+  ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.globalCompositeOperation="destination-out";
+  const sx=W/2,sy=H/2;
+  ctx.beginPath();ctx.moveTo(sx,sy);
+  const start=(player.dir-player.fov/2)*Math.PI/180;
+  const end=(player.dir+player.fov/2)*Math.PI/180;
+  for(let a=start;a<=end;a+=Math.PI/60){
+    let ex=player.x+Math.cos(a)*player.range,ey=player.y+Math.sin(a)*player.range;
+    for(let d=0;d<player.range;d+=6){
+      const wx=player.x+Math.cos(a)*d,wy=player.y+Math.sin(a)*d;
+      const {tx,ty}=worldToTile(wx,wy);
+      if(grid[ty]?.[tx]===1){ex=wx;ey=wy;break;}
+    }
+    ctx.lineTo(sx+(ex-player.x),sy+(ey-player.y));
+  }
+  ctx.closePath();ctx.fill();ctx.restore();
+}
+
+/* ====== LOOP ====== */
+function loop(){frame++;update();draw();requestAnimationFrame(loop);}
+window.addEventListener("resize",()=>{W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;});
+window.addEventListener("touchstart",()=>{if(over)reset();});
+window.addEventListener("mousedown",()=>{if(over)reset();});
+reset();loop();
+</script>
+</body>
+</html>
