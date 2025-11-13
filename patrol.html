@@ -387,44 +387,56 @@ function draw(){
 
   ctx.restore();
 
-  // draw darkness overlay and carve out player's FOV using composite
-  // full dark
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
-  ctx.fillRect(0,0,W,H);
-  // cut out player's FOV (destination-out)
-  ctx.save();
-  ctx.globalCompositeOperation = 'destination-out';
-  // compute player's FOV polygon in screen coords
-  const sx = W/2, sy = H/2;
-  const fovRad = player.fov * Math.PI/180;
-  const a0 = (player.dir - player.fov/2) * Math.PI/180;
-  const a1 = (player.dir + player.fov/2) * Math.PI/180;
+// ---- 어둠 오버레이 + 시야각 처리 ----
+ctx.fillStyle = 'rgba(0,0,0,0.88)';
+ctx.fillRect(0,0,W,H);
+
+ctx.save();
+ctx.globalCompositeOperation = 'destination-out';
+
+// 공용 시야 함수
+function drawVision(x, y, dirDeg, fovDeg, range, alpha=1) {
+  const sx = W/2 + (x - player.x);
+  const sy = H/2 + (y - player.y);
+  const a0 = (dirDeg - fovDeg/2) * Math.PI/180;
+  const a1 = (dirDeg + fovDeg/2) * Math.PI/180;
+
   ctx.beginPath();
   ctx.moveTo(sx, sy);
-  const steps = 40;
-  for(let i=0;i<=steps;i++){
-    const a = a0 + (a1-a0)*(i/steps);
-    // raycast to respect walls: project out to max range but stop at wall intersection
-    let ex = player.x + Math.cos(a)*player.range;
-    let ey = player.y + Math.sin(a)*player.range;
-    // step along in small increments (world coords)
-    const dx = Math.cos(a), dy = Math.sin(a);
-    let blockedPoint = null;
-    for(let d=0; d<player.range; d+=6){
-      const wx = player.x + dx*d, wy = player.y + dy*d;
+  const steps = 60;
+  for (let i=0; i<=steps; i++) {
+    const a = a0 + (a1 - a0)*(i/steps);
+    let ex = x + Math.cos(a)*range;
+    let ey = y + Math.sin(a)*range;
+    // 벽이 있으면 시야 차단
+    for(let d=0; d<range; d+=6){
+      const wx = x + Math.cos(a)*d;
+      const wy = y + Math.sin(a)*d;
       const {tx,ty} = worldToTile(wx,wy);
-      if(tx<0||ty<0||tx>=COLS||ty>=ROWS){ blockedPoint = {x:wx,y:wy}; break; }
-      if(grid[ty][tx]===1){ blockedPoint = {x:wx,y:wy}; break; }
+      if(tx<0||ty<0||tx>=COLS||ty>=ROWS || grid[ty][tx]===1){
+        ex = wx; ey = wy; break;
+      }
     }
-    if(blockedPoint){ ex = blockedPoint.x; ey = blockedPoint.y; }
-    // convert world to screen coords
-    const screenX = sx + (ex - player.x);
-    const screenY = sy + (ey - player.y);
+    const screenX = W/2 + (ex - player.x);
+    const screenY = H/2 + (ey - player.y);
     ctx.lineTo(screenX, screenY);
   }
   ctx.closePath();
+
+  const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, range);
+  grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
   ctx.fill();
-  ctx.restore();
+}
+
+// 플레이어 시야 (앞쪽 120°만 밝게)
+drawVision(player.x, player.y, player.dir, 120, player.range, 1);
+
+// 적 시야도 살짝 보이게
+drawVision(enemy.x, enemy.y, enemy.dir, 120, enemy.range*0.8, 0.25);
+
+ctx.restore();
 
   // draw small player-facing indicator (optional)
   ctx.save();
