@@ -2,201 +2,271 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Backroom-mini</title>
 <style>
-  :root {
-    --bg: #0b0d0f; --floor:#14181b; --wall:#323b40;
-    --player:#33e3a1; --enemy:#ff4444;
+  html, body { margin:0; height:100%; background:#06060a; overflow:hidden; font-family:sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; background:#0f1724; touch-action:none; }
+  #hud { position:fixed; top:10px; right:10px; color:white; background:rgba(0,0,0,0.3); padding:5px 10px; border-radius:6px; z-index:10; }
+  #centerMsg { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:white; padding:20px; border-radius:10px; display:none; text-align:center; z-index:20; }
+  #joystickBase, #joystickStick {
+    position: fixed;
+    border-radius: 50%;
+    touch-action: none;
+    z-index: 20;
   }
-  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);touch-action:none;}
-  canvas{width:100vw;height:100vh;display:block;background:var(--floor);}
-  .joystick{
-    position:fixed;left:16px;bottom:16px;width:120px;height:120px;
-    border-radius:50%;background:rgba(255,255,255,0.05);
-    border:2px solid rgba(255,255,255,0.08);touch-action:none;z-index:10;
+  #joystickBase {
+    background: rgba(255,255,255,0.08);
+    width: 120px; height: 120px;
+    left: 60px; bottom: 60px;
   }
-  .stick{
-    position:absolute;left:34px;top:34px;width:52px;height:52px;
-    border-radius:50%;background:rgba(255,255,255,0.3);
-    transition:transform .05s;
+  #joystickStick {
+    background: rgba(255,255,255,0.25);
+    width: 60px; height: 60px;
+    left: 90px; bottom: 90px;
   }
-  #msg{
-    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-    font-size:28px;color:white;text-align:center;background:rgba(0,0,0,0.7);
-    opacity:0;transition:opacity .3s;z-index:20;pointer-events:none;
-  }
-  #msg.show{opacity:1;pointer-events:auto;}
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div class="joystick" id="joy"><div class="stick" id="stick"></div></div>
-<div id="msg">잡혔다...<br><small>탭해서 다시 시작</small></div>
+<div id="hud">상태: 탐색 중</div>
+<div id="centerMsg"></div>
+
+<div id="joystickBase"></div>
+<div id="joystickStick"></div>
 
 <script>
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d",{alpha:false});
-let W=innerWidth,H=innerHeight;canvas.width=W;canvas.height=H;
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W = innerWidth, H = innerHeight;
+canvas.width = W; canvas.height = H;
 
-/* ====== MAP ====== */
-const TILE=48, COLS=18, ROWS=12;
-let grid=[]; // 0 free, 1 wall
+const TILE = 48, COLS = 36, ROWS = 26;
+const MAP_W = COLS*TILE, MAP_H = ROWS*TILE;
+let grid = [];
+
+const player = { x:0, y:0, r:14, spd:2.5, dir:0 };
+const exit = { tx:0, ty:0, x:0, y:0 };
+const enemies = [];
+const ENEMY_COUNT = 3;
+
 function genMap(){
-  grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
-  for(let x=0;x<COLS;x++){grid[0][x]=1;grid[ROWS-1][x]=1;}
-  for(let y=0;y<ROWS;y++){grid[y][0]=1;grid[y][COLS-1]=1;}
+  grid = Array.from({length:ROWS}, ()=>Array.from({length:COLS}, ()=>0));
+  for(let x=0;x<COLS;x++){ grid[0][x]=1; grid[ROWS-1][x]=1; }
+  for(let y=0;y<ROWS;y++){ grid[y][0]=1; grid[y][COLS-1]=1; }
   for(let y=1;y<ROWS-1;y++){
     for(let x=1;x<COLS-1;x++){
-      if(Math.random()<0.18)grid[y][x]=1;
+      if(Math.random()<0.15) grid[y][x]=1;
     }
   }
 }
-function tileToWorld(tx,ty){return {x:tx*TILE+TILE/2,y:ty*TILE+TILE/2}}
-function worldToTile(x,y){return {tx:Math.floor(x/TILE),ty:Math.floor(y/TILE)}}
-function collidesAt(x,y,r){
+
+function tileToWorld(tx,ty){ return { x: tx*TILE + TILE/2, y: ty*TILE + TILE/2 }; }
+function worldToTile(x,y){ return { tx: Math.floor(x/TILE), ty: Math.floor(y/TILE) }; }
+
+function collides(x,y,r){
   const {tx,ty}=worldToTile(x,y);
-  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-    const nx=tx+dx,ny=ty+dy;
-    if(nx<0||ny<0||nx>=COLS||ny>=ROWS)continue;
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    const nx=tx+dx, ny=ty+dy;
+    if(nx<0||ny<0||nx>=COLS||ny>=ROWS) continue;
     if(grid[ny][nx]===1){
-      const rx=nx*TILE,ry=ny*TILE;
-      const cx=Math.max(rx,Math.min(x,rx+TILE));
-      const cy=Math.max(ry,Math.min(y,ry+TILE));
-      if((x-cx)**2+(y-cy)**2<r*r)return true;
+      const rx=nx*TILE, ry=ny*TILE;
+      const closestX = Math.max(rx, Math.min(x, rx+TILE));
+      const closestY = Math.max(ry, Math.min(y, ry+TILE));
+      const dx0 = x - closestX, dy0 = y - closestY;
+      if(dx0*dx0 + dy0*dy0 < r*r) return true;
     }
   }
   return false;
 }
 
-/* ====== ENTITIES ====== */
-const player={x:0,y:0,r:14,spd:2.6,dir:-90,fov:100,range:220};
-const enemy={x:0,y:0,r:16,spd:1.5,dir:0,fov:120,range:240,chasing:false};
-function safeSpawn(ent){
-  for(let i=0;i<500;i++){
-    const tx=Math.floor(Math.random()*(COLS-2))+1;
-    const ty=Math.floor(Math.random()*(ROWS-2))+1;
+function safeSpawn(r){
+  for(let i=0;i<2000;i++){
+    const tx = 1 + Math.floor(Math.random()*(COLS-2));
+    const ty = 1 + Math.floor(Math.random()*(ROWS-2));
     if(grid[ty][tx]===0){
-      const {x,y}=tileToWorld(tx,ty);
-      if(!collidesAt(x,y,ent.r))return {x,y};
+      const w = tileToWorld(tx,ty);
+      if(!collides(w.x,w.y,r)) return { x:w.x, y:w.y, tx, ty };
     }
   }
-  return {x:TILE*2,y:TILE*2};
+  return { x:TILE*2, y:TILE*2, tx:2, ty:2 };
 }
 
-/* ====== JOYSTICK ====== */
-const joy=document.getElementById("joy"),stick=document.getElementById("stick");
-let move={x:0,y:0},drag=false;
-joy.addEventListener("touchstart",()=>drag=true);
-joy.addEventListener("touchmove",e=>{
-  if(!drag)return;
-  const t=e.touches[0],r=joy.getBoundingClientRect();
-  const cx=r.left+r.width/2,cy=r.top+r.height/2;
-  const dx=t.clientX-cx,dy=t.clientY-cy;
-  const dist=Math.min(Math.hypot(dx,dy),40);
-  const a=Math.atan2(dy,dx);
-  stick.style.transform=`translate(${Math.cos(a)*dist}px,${Math.sin(a)*dist}px)`;
-  move.x=Math.cos(a)*(dist/40);move.y=Math.sin(a)*(dist/40);
-  player.dir=a*180/Math.PI;
-  e.preventDefault();
-});
-joy.addEventListener("touchend",()=>{drag=false;stick.style.transform="translate(0,0)";move={x:0,y:0}});
+function spawnEnemies(n){
+  enemies.length=0;
+  for(let i=0;i<n;i++){
+    const s=safeSpawn(14);
+    enemies.push({ x:s.x, y:s.y, r:14, spd:1.5, dir:0 });
+  }
+}
 
-/* ====== GAME STATE ====== */
-let over=false,frame=0;
-function reset(){
-  over=false;
+const keys={};
+window.addEventListener('keydown', e=>keys[e.key.toLowerCase()]=true);
+window.addEventListener('keyup', e=>keys[e.key.toLowerCase()]=false);
+
+function updateEnemies(){
+  enemies.forEach(e=>{
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    e.dir = Math.atan2(dy, dx);
+    const dist = Math.hypot(dx,dy);
+    const speed = e.spd * (dist<200?2:1);
+    const nx = e.x + Math.cos(e.dir)*speed;
+    const ny = e.y + Math.sin(e.dir)*speed;
+    if(!collides(nx,e.y,e.r)) e.x = nx;
+    if(!collides(e.x,ny,e.r)) e.y = ny;
+
+    if(dist < e.r + player.r){
+      gameOver=true;
+      hud.innerText='잡혔다...';
+      centerMsg.style.display='block';
+      centerMsg.innerHTML='<strong>당신은 잡혔습니다!</strong><br><small>탭/클릭하여 다시 시작</small>';
+    }
+  });
+}
+
+const hud = document.getElementById('hud');
+const centerMsg = document.getElementById('centerMsg');
+let gameOver=false;
+
+function resetGame(){
+  gameOver=false;
+  centerMsg.style.display='none';
   genMap();
-  let p=safeSpawn(player);player.x=p.x;player.y=p.y;
-  let e;
-  do{e=safeSpawn(enemy);}while(Math.hypot(e.x-p.x,e.y-p.y)<TILE*5);
-  enemy.x=e.x;enemy.y=e.y;enemy.chasing=false;
-  document.getElementById("msg").classList.remove("show");
+  const p = safeSpawn(player.r);
+  player.x=p.x; player.y=p.y;
+  const e = safeSpawn(player.r);
+  exit.tx=e.tx; exit.ty=e.ty; exit.x=e.x; exit.y=e.y;
+  spawnEnemies(ENEMY_COUNT);
+  hud.innerText='상태: 탐색 중';
 }
 
-/* ====== RAY & VISION ====== */
-function rayBlocked(ax,ay,bx,by,step=6){
-  const dx=bx-ax,dy=by-ay,L=Math.hypot(dx,dy);
-  const nx=dx/L,ny=dy/L;
-  for(let t=0;t<L;t+=step){
-    const px=ax+nx*t,py=ay+ny*t;
-    const {tx,ty}=worldToTile(px,py);
-    if(grid[ty]?.[tx]===1)return true;
-  }
-  return false;
+// 🎮 가상 조이스틱
+const base = document.getElementById('joystickBase');
+const stick = document.getElementById('joystickStick');
+let joyActive = false, joyCenter = {x:0,y:0}, joyVec = {x:0,y:0};
+
+function setStickPos(x,y){
+  stick.style.left = (x - 30) + 'px';
+  stick.style.top  = (y - 30) + 'px';
 }
 
-/* ====== UPDATE ====== */
+base.addEventListener('touchstart', e=>{
+  joyActive=true;
+  const t=e.touches[0];
+  joyCenter={x:t.clientX, y:t.clientY};
+  setStickPos(joyCenter.x, joyCenter.y);
+});
+
+base.addEventListener('touchmove', e=>{
+  if(!joyActive) return;
+  const t=e.touches[0];
+  let dx=t.clientX-joyCenter.x;
+  let dy=t.clientY-joyCenter.y;
+  const dist=Math.min(Math.hypot(dx,dy),60);
+  const angle=Math.atan2(dy,dx);
+  joyVec.x=Math.cos(angle)*(dist/60);
+  joyVec.y=Math.sin(angle)*(dist/60);
+  setStickPos(joyCenter.x+dx, joyCenter.y+dy);
+});
+
+base.addEventListener('touchend', ()=>{
+  joyActive=false;
+  joyVec.x=joyVec.y=0;
+  setStickPos(joyCenter.x, joyCenter.y);
+});
+
 function update(){
-  if(over)return;
-  const nx=player.x+move.x*player.spd,ny=player.y+move.y*player.spd;
-  if(!collidesAt(nx,player.y,player.r))player.x=nx;
-  if(!collidesAt(player.x,ny,player.r))player.y=ny;
-  // enemy
-  const dx=player.x-enemy.x,dy=player.y-enemy.y,dist=Math.hypot(dx,dy);
-  const aToP=Math.atan2(dy,dx)*180/Math.PI;
-  const angDiff=Math.abs(((aToP-enemy.dir+540)%360)-180);
-  const sees=dist<enemy.range&&angDiff<enemy.fov/2&&!rayBlocked(enemy.x,enemy.y,player.x,player.y,6);
-  if(sees){
-    enemy.chasing=true;enemy.spd=4;enemy.dir=aToP;
-    const rad=aToP*Math.PI/180;
-    const ex=enemy.x+Math.cos(rad)*enemy.spd,ey=enemy.y+Math.sin(rad)*enemy.spd;
-    if(!collidesAt(ex,ey,enemy.r)){enemy.x=ex;enemy.y=ey;}
-  }else{
-    enemy.chasing=false;enemy.spd=1.2;
-    if(frame%30===0)enemy.dir=Math.random()*360;
-    const rad=enemy.dir*Math.PI/180;
-    const ex=enemy.x+Math.cos(rad)*enemy.spd,ey=enemy.y+Math.sin(rad)*enemy.spd;
-    if(!collidesAt(ex,ey,enemy.r)){enemy.x=ex;enemy.y=ey;}
-    else enemy.dir+=180;
+  if(gameOver) return;
+
+  let mx=joyVec.x, my=joyVec.y;
+  if(keys['w']||keys['arrowup']) my=-1;
+  if(keys['s']||keys['arrowdown']) my=1;
+  if(keys['a']||keys['arrowleft']) mx=-1;
+  if(keys['d']||keys['arrowright']) mx=1;
+  const mag = Math.hypot(mx,my);
+  if(mag>0){ mx/=mag; my/=mag; player.dir=Math.atan2(my,mx); }
+
+  const nx = player.x + mx*player.spd;
+  const ny = player.y + my*player.spd;
+  if(!collides(nx,player.y,player.r)) player.x=nx;
+  if(!collides(player.x,ny,player.r)) player.y=ny;
+
+  const dExit = Math.hypot(player.x - exit.x, player.y - exit.y);
+  if(dExit < player.r + TILE*0.4){
+    gameOver=true;
+    hud.innerText='탈출 성공!';
+    centerMsg.style.display='block';
+    centerMsg.innerHTML='<strong>탈출 성공!</strong><br><small>탭/클릭하여 다시 시작</small>';
   }
-  if(Math.hypot(player.x-enemy.x,player.y-enemy.y)<player.r+enemy.r){
-    over=true;document.getElementById("msg").classList.add("show");
-  }
+
+  updateEnemies();
 }
 
-/* ====== DRAW ====== */
 function draw(){
   ctx.clearRect(0,0,W,H);
-  const camX=W/2-player.x,camY=H/2-player.y;
-  ctx.save();ctx.translate(camX,camY);
-  // draw floor + wall
-  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
-    if(grid[y][x]===1){ctx.fillStyle=varWall;ctx.fillStyle="#323b40";ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
-  }
-  // enemy
-  ctx.fillStyle=enemy.chasing?"#ff7777":"#ff4444";
-  ctx.beginPath();ctx.arc(enemy.x,enemy.y,enemy.r,0,Math.PI*2);ctx.fill();
-  // player
-  ctx.fillStyle="#33e3a1";ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
-  ctx.restore();
+  ctx.save();
+  ctx.translate(W/2 - player.x, H/2 - player.y);
 
-  // dark overlay with player FOV
-  ctx.fillStyle="rgba(0,0,0,0.93)";
-  ctx.fillRect(0,0,W,H);
-  ctx.save();ctx.globalCompositeOperation="destination-out";
-  const sx=W/2,sy=H/2;
-  ctx.beginPath();ctx.moveTo(sx,sy);
-  const start=(player.dir-player.fov/2)*Math.PI/180;
-  const end=(player.dir+player.fov/2)*Math.PI/180;
-  for(let a=start;a<=end;a+=Math.PI/60){
-    let ex=player.x+Math.cos(a)*player.range,ey=player.y+Math.sin(a)*player.range;
-    for(let d=0;d<player.range;d+=6){
-      const wx=player.x+Math.cos(a)*d,wy=player.y+Math.sin(a)*d;
-      const {tx,ty}=worldToTile(wx,wy);
-      if(grid[ty]?.[tx]===1){ex=wx;ey=wy;break;}
+  ctx.fillStyle='#11202b';
+  ctx.fillRect(0,0,MAP_W,MAP_H);
+
+  ctx.fillStyle='#2f3740';
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(grid[y][x]===1) ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
     }
-    ctx.lineTo(sx+(ex-player.x),sy+(ey-player.y));
   }
-  ctx.closePath();ctx.fill();ctx.restore();
+
+  ctx.fillStyle='#ffd166';
+  ctx.fillRect(exit.tx*TILE + TILE*0.15, exit.ty*TILE + TILE*0.15, TILE*0.7, TILE*0.7);
+
+  ctx.fillStyle='#33e3a1';
+  ctx.beginPath();
+  ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(player.x,player.y);
+  ctx.lineTo(player.x+Math.cos(player.dir)*(player.r+8), player.y+Math.sin(player.dir)*(player.r+8));
+  ctx.stroke();
+
+  enemies.forEach(e=>{
+    ctx.save();
+    ctx.translate(e.x,e.y);
+    ctx.rotate(e.dir);
+    ctx.fillStyle='rgba(255,80,80,0.12)';
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.arc(0,0,e.r+50,-Math.PI/6,Math.PI/6);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle='#ff5b5b';
+    ctx.beginPath();
+    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  ctx.restore();
 }
 
-/* ====== LOOP ====== */
-function loop(){frame++;update();draw();requestAnimationFrame(loop);}
-window.addEventListener("resize",()=>{W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H;});
-window.addEventListener("touchstart",()=>{if(over)reset();});
-window.addEventListener("mousedown",()=>{if(over)reset();});
-reset();loop();
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('mousedown', ()=>{ if(gameOver) resetGame(); });
+window.addEventListener('touchstart', ()=>{ if(gameOver) resetGame(); });
+
+window.addEventListener('resize', ()=>{
+  W=innerWidth; H=innerHeight;
+  canvas.width=W; canvas.height=H;
+});
+
+resetGame();
+loop();
 </script>
 </body>
 </html>
