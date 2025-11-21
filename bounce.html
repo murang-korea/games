@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>쫀득 슬라임 튕기기 (Top-Down)</title>
+<style>
+  :root{
+    --bg:#0b0f14; --floor:#0f1b23; --slime:#9ff6df; --eye:#0b1b15;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;font-family:Inter,system-ui,Arial}
+  canvas{display:block;width:100vw;height:100vh;background:linear-gradient(180deg,var(--floor),#071018);}
+  /* UI */
+  #ui {
+    position:fixed; left:12px; top:12px; z-index:30; color:#fff;
+    background:rgba(0,0,0,0.25); padding:6px 10px; border-radius:8px; font-size:14px;
+  }
+  #hint { position:fixed; right:12px; top:12px; color:#fff; background:rgba(0,0,0,0.18); padding:6px 10px; border-radius:8px; font-size:13px; }
+  #debug { position:fixed; left:12px; bottom:12px; color:#fff; font-size:12px; opacity:.6; }
+  @media (max-width:420px){ #ui,#hint{font-size:12px;padding:6px 8px} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">속도: <span id="speed">0.00</span></div>
+<div id="hint">터치/드래그 → 당기고 놓기: 힘을 주어 튕겨요</div>
+<div id="debug" hidden></div>
+
+<script>
+/*
+  Top-Down Bouncy Slime
+  - Soft-body feel via squash/stretch on collisions
+  - Touch / Mouse: drag from ball to apply impulse (slingshot)
+  - Elastic collisions with walls
+  - Mobile optimized, single file
+*/
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+
+function resize(){
+  DPR = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(innerWidth * DPR);
+  canvas.height = Math.round(innerHeight * DPR);
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* World */
+const W = () => innerWidth;
+const H = () => innerHeight;
+
+/* Slime ball state */
+const ball = {
+  x: innerWidth*0.5,
+  y: innerHeight*0.45,
+  vx: 0,
+  vy: 0,
+  baseR: Math.min(80, Math.round(Math.min(innerWidth, innerHeight)*0.11)),
+  r: Math.min(80, Math.round(Math.min(innerWidth, innerHeight)*0.11)),
+  mass: 1,
+  bounce: 0.88,      // energy retention on wall hit
+  friction: 0.995,   // air friction
+  squish: 0,         // squash factor (positive compress)
+  squishV: 0
+};
+
+/* physics */
+const gravity = 0.0; // top-down: no gravity, but we can add slight drift if desired
+const timeStep = 1/60;
+
+/* input (slingshot) */
+let pointer = {down:false, sx:0, sy:0, x:0, y:0, dragging:false};
+let draggingBall = false;
+
+/* touch/mouse handlers */
+function pointerStart(x,y){
+  pointer.down = true;
+  pointer.sx = x; pointer.sy = y;
+  pointer.x = x; pointer.y = y;
+  // start dragging only if tapped near ball
+  const dx = x - ball.x, dy = y - ball.y;
+  if(Math.hypot(dx,dy) <= ball.r * 1.25){
+    draggingBall = true;
+  } else draggingBall = false;
+}
+function pointerMove(x,y){
+  pointer.x = x; pointer.y = y;
+}
+function pointerEnd(x,y){
+  if(pointer.down && draggingBall){
+    // apply impulse: vector from pointer release to ball (slingshot feel)
+    const dx = ball.x - pointer.x;
+    const dy = ball.y - pointer.y;
+    // strength proportional to pull distance, capped
+    const dist = Math.hypot(dx,dy);
+    const maxPull = Math.min(Math.max(window.innerWidth, window.innerHeight)*0.5, 400);
+    const strength = Math.min(dist, maxPull) / 10; // tuning factor
+    // direction
+    const ang = Math.atan2(dy,dx);
+    const impulse = strength * (1 + Math.min(dist/200, 1.8)); // nonlinear boost
+    ball.vx += Math.cos(ang) * impulse / ball.mass;
+    ball.vy += Math.sin(ang) * impulse / ball.mass;
+    // squish feedback
+    ball.squishV = Math.min(0.9, dist/200);
+  }
+  pointer.down = false;
+  draggingBall = false;
+}
+
+canvas.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  const t = e.touches[0];
+  pointerStart(t.clientX, t.clientY);
+}, {passive:false});
+canvas.addEventListener('touchmove', e=>{
+  const t = e.touches[0];
+  pointerMove(t.clientX, t.clientY);
+}, {passive:false});
+canvas.addEventListener('touchend', e=>{
+  pointerEnd(pointer.x, pointer.y);
+}, {passive:false});
+
+canvas.addEventListener('mousedown', e=>{
+  pointerStart(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', e=>{
+  pointerMove(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', e=>{
+  pointerEnd(e.clientX, e.clientY);
+});
+
+/* walls padding (so ball doesn't draw off screen) */
+const padding = 6;
+
+/* update physics */
+function integrate(dt){
+  // integrate velocity
+  ball.vx *= ball.friction;
+  ball.vy *= ball.friction;
+  ball.vx += 0 * dt; // gravity if needed
+  ball.vy += 0 * dt;
+
+  ball.x += ball.vx * dt * 60;
+  ball.y += ball.vy * dt * 60;
+
+  // wall collision (simple elastic)
+  // left
+  if(ball.x - ball.r < padding){
+    ball.x = padding + ball.r;
+    ball.vx = -ball.vx * ball.bounce;
+    // squish based on impact
+    ball.squishV += Math.min(1, Math.abs(ball.vx)/20);
+  }
+  // right
+  if(ball.x + ball.r > innerWidth - padding){
+    ball.x = innerWidth - padding - ball.r;
+    ball.vx = -ball.vx * ball.bounce;
+    ball.squishV += Math.min(1, Math.abs(ball.vx)/20);
+  }
+  // top
+  if(ball.y - ball.r < padding){
+    ball.y = padding + ball.r;
+    ball.vy = -ball.vy * ball.bounce;
+    ball.squishV += Math.min(1, Math.abs(ball.vy)/20);
+  }
+  // bottom
+  if(ball.y + ball.r > innerHeight - padding){
+    ball.y = innerHeight - padding - ball.r;
+    ball.vy = -ball.vy * ball.bounce;
+    ball.squishV += Math.min(1, Math.abs(ball.vy)/20);
+  }
+
+  // small floor friction
+  if(Math.hypot(ball.vx, ball.vy) < 0.02){
+    ball.vx = 0; ball.vy = 0;
+  }
+
+  // squash/stretch dynamics
+  // squish > 0 means compressed vertically (on impact)
+  ball.squish += ball.squishV;
+  ball.squishV *= 0.78;
+  // decay
+  ball.squish *= 0.88;
+
+  // smooth radius change if needed
+  const targetR = ball.baseR;
+  ball.r += (targetR - ball.r) * 0.06;
+}
+
+/* draw soft ball */
+function drawBall(){
+  // compute squash/stretch: map squish to scaleX / scaleY
+  // when compressed (squish>0) make x bigger, y smaller.
+  const s = Math.max(-0.35, Math.min(0.8, ball.squish)); // clamp
+  const scaleX = 1 + s * 0.45;
+  const scaleY = 1 - s * 0.45;
+
+  ctx.save();
+  ctx.translate(ball.x, ball.y);
+  ctx.scale(scaleX, scaleY);
+
+  // body
+  const r = ball.r;
+  const grad = ctx.createRadialGradient(-r*0.3, -r*0.4, r*0.15, 0,0,r);
+  grad.addColorStop(0, '#ffffffaa');
+  grad.addColorStop(0.12, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(0.22, '#bfffe9');
+  grad.addColorStop(1, '#7fe8cc');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fill();
+
+  // subtle rim
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // eyes (simple)
+  ctx.fillStyle = '#05221b';
+  const eyeOffsetX = r*0.25;
+  const eyeOffsetY = -r*0.14;
+  ctx.beginPath();
+  ctx.arc(-eyeOffsetX, eyeOffsetY, r*0.12, 0, Math.PI*2);
+  ctx.arc(eyeOffsetX, eyeOffsetY, r*0.12, 0, Math.PI*2);
+  ctx.fill();
+
+  // eye highlights
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath();
+  ctx.arc(-eyeOffsetX - r*0.03, eyeOffsetY - r*0.04, r*0.04, 0, Math.PI*2);
+  ctx.arc(eyeOffsetX - r*0.03, eyeOffsetY - r*0.04, r*0.04, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/* draw slingshot guide when dragging */
+function drawGuide(){
+  if(pointer.down && draggingBall){
+    ctx.save();
+    ctx.beginPath();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.setLineDash([6,8]);
+    ctx.moveTo(ball.x, ball.y);
+    ctx.lineTo(pointer.x, pointer.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // draw pull end
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, 12,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* speed display */
+const speedEl = document.getElementById('speed');
+
+/* main loop */
+let last = performance.now();
+function frame(t){
+  const dt = Math.min(0.032, (t - last)/1000);
+  last = t;
+
+  integrate(dt);
+
+  // clear
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+
+  // subtle floor grid for depth
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#fff';
+  const step = 40;
+  for(let gx = 0; gx < innerWidth; gx += step){
+    ctx.fillRect(gx + (t*0.01%step), 0, 1, innerHeight);
+  }
+  ctx.restore();
+
+  // draw ball
+  drawBall();
+
+  // draw guide
+  drawGuide();
+
+  // small velocity arrow
+  const sp = Math.hypot(ball.vx, ball.vy);
+  speedEl.innerText = sp.toFixed(2);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* keyboard nudges for desktop convenience */
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  const nudge = 2.2;
+  if(k==='arrowleft' || k==='a') ball.vx -= nudge;
+  if(k==='arrowright' || k==='d') ball.vx += nudge;
+  if(k==='arrowup' || k==='w') ball.vy -= nudge;
+  if(k==='arrowdown' || k==='s') ball.vy += nudge;
+});
+
+/* ensure ball inside on resize */
+window.addEventListener('resize', ()=>{
+  ball.x = Math.min(Math.max(ball.r + padding, ball.x), innerWidth - ball.r - padding);
+  ball.y = Math.min(Math.max(ball.r + padding, ball.y), innerHeight - ball.r - padding);
+});
+
+/* small physics tick to keep stable on background tabs */
+setInterval(()=>{ integrate(1/60); }, 1000/60);
+
+</script>
+</body>
+</html>
