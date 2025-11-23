@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>큐아르코드 생성기 — 단일 파일</title>
+<style>
+  :root{ --bg:#0b1220; --card:#0f1724; --accent:#60a5fa; --muted:#9aa9c7; color-scheme:dark; }
+  html,body{height:100%; margin:0; font-family:Inter, "Noto Sans KR", system-ui, sans-serif; background:linear-gradient(180deg,#071021 0%, #07172a 100%); color:#e6eef8;}
+  .wrap{max-width:1100px; margin:24px auto; padding:18px; display:grid; gap:12px;}
+  header{display:flex; gap:12px; align-items:center; justify-content:space-between;}
+  header h1{margin:0; font-size:18px;}
+  .panel{background:var(--card); padding:12px; border-radius:12px; box-shadow:0 6px 20px rgba(2,6,23,0.6);}
+  .layout{display:grid; grid-template-columns: 1fr 420px; gap:12px;}
+  .controls{display:grid; gap:10px;}
+  label{font-size:13px; color:var(--muted);}
+  input[type="text"], select, input[type="number"]{width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.04); background:transparent; color:inherit;}
+  .row{display:flex; gap:8px; align-items:center;}
+  .btn{background:var(--accent); color:#021124; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600;}
+  .btn.secondary{background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.04);}
+  .preview{display:flex; flex-direction:column; align-items:center; gap:10px; padding:12px;}
+  #qr-wrap{width:100%; background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent); padding:12px; border-radius:8px; display:flex; align-items:center; justify-content:center;}
+  .small{font-size:12px; color:var(--muted);}
+  .flex-between{display:flex; justify-content:space-between; align-items:center;}
+  .logo-preview {width:64px; height:64px; object-fit:contain; border-radius:8px; background:#0b1220; padding:6px;}
+  footer{color:var(--muted); font-size:13px; text-align:center; margin-top:6px;}
+  @media(max-width:980px){ .layout{grid-template-columns: 1fr; } .preview{order:-1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>🔲 QR 코드 생성기</h1>
+      <div class="small">모양 · 색 · 배경 · 로고 넣기 · PNG/SVG 다운로드</div>
+    </div>
+    <div class="small">단일 HTML 파일</div>
+  </header>
+
+  <div class="layout">
+    <div class="panel controls">
+      <div>
+        <label>텍스트 / URL</label>
+        <input id="text" type="text" placeholder="https://example.com 또는 원하는 텍스트" value="https://example.com" />
+      </div>
+
+      <div class="row">
+        <div style="flex:1">
+          <label>사이즈 (px)</label>
+          <input id="size" type="number" min="64" max="2000" value="400"/>
+        </div>
+        <div style="width:160px">
+          <label>마진 (px)</label>
+          <input id="margin" type="number" min="0" max="50" value="10"/>
+        </div>
+      </div>
+
+      <div class="row">
+        <div style="flex:1">
+          <label>도트 스타일</label>
+          <select id="dotStyle">
+            <option value="square">정사각형 (Square)</option>
+            <option value="dots">둥근 점 (Dots)</option>
+            <option value="rounded">라운드 (Rounded)</option>
+          </select>
+        </div>
+        <div style="width:160px">
+          <label>눈(eye) 스타일</label>
+          <select id="eyeStyle">
+            <option value="square">정사각형(Eye Square)</option>
+            <option value="circle">원형(Eye Circle)</option>
+            <option value="rounded">둥근 테두리(Rounded)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div style="flex:1">
+          <label>전경 색상</label>
+          <input id="dotColor" type="color" value="#061a40"/>
+        </div>
+        <div style="flex:1">
+          <label>배경 색상</label>
+          <input id="bgColor" type="color" value="#ffffff"/>
+        </div>
+      </div>
+
+      <div>
+        <label>배경 투명 (PNG로 저장 시 투명 유지)</label>
+        <select id="backgroundTransparent">
+          <option value="false">아니오 (색상 사용)</option>
+          <option value="true">예 (투명)</option>
+        </select>
+      </div>
+
+      <div>
+        <label>로고 이미지 (선택)</label>
+        <div class="row">
+          <input id="logo" type="file" accept="image/*"/>
+          <button id="clearLogo" class="btn secondary" type="button">삭제</button>
+        </div>
+        <div class="row" style="margin-top:8px; gap:12px; align-items:center;">
+          <img id="logoPreview" class="logo-preview" src="" alt="" style="display:none"/>
+          <div class="small">로고는 중앙에 삽입됨 (권장 64×64)</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="generate" class="btn">생성</button>
+        <button id="downloadPNG" class="btn" style="background:#34d399">PNG로 저장</button>
+        <button id="downloadSVG" class="btn" style="background:#fbbf24">SVG로 저장</button>
+        <button id="copyData" class="btn secondary">데이터 복사</button>
+      </div>
+
+      <div>
+        <label class="small">미리보기 옵션</label>
+        <div class="small">※ 일부 브라우저에서 SVG 다운로드가 자동으로 다른 창에서 열릴 수 있음.</div>
+      </div>
+    </div>
+
+    <div class="panel preview">
+      <div class="small flex-between" style="width:100%; align-items:center;">
+        <div>미리보기</div>
+        <div class="small">실시간 반영됨</div>
+      </div>
+      <div id="qr-wrap">
+        <!-- QR will be injected here -->
+      </div>
+      <div class="small" style="opacity:0.85">원본 크기: <span id="infoSize">400</span>px · 마진: <span id="infoMargin">10</span>px</div>
+    </div>
+  </div>
+
+  <footer class="small">사용법: 텍스트/URL 입력 → 옵션 선택 → 생성 → PNG/SVG로 저장. 로고는 중앙에 삽입됨.</footer>
+</div>
+
+<!-- QR 코드 라이브러리: qr-code-styling (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.5.0/lib/qr-code-styling.js"></script>
+
+<script>
+/*
+  구현 노트:
+  - 라이브러리: qr-code-styling (https://github.com/kozakdenys/qr-code-styling)
+  - 로고를 사용하면 PNG 저장 시 자동으로 로고가 포함됨.
+  - 배경 투명 옵션을 true로 하면 배경색 대신 투명으로 처리 (PNG에서만 의미 있음).
+*/
+
+const qrWrap = document.getElementById('qr-wrap');
+const textInput = document.getElementById('text');
+const sizeInput = document.getElementById('size');
+const marginInput = document.getElementById('margin');
+const dotStyleInput = document.getElementById('dotStyle');
+const eyeStyleInput = document.getElementById('eyeStyle');
+const dotColorInput = document.getElementById('dotColor');
+const bgColorInput = document.getElementById('bgColor');
+const generateBtn = document.getElementById('generate');
+const downloadPNG = document.getElementById('downloadPNG');
+const downloadSVG = document.getElementById('downloadSVG');
+const copyDataBtn = document.getElementById('copyData');
+const logoInput = document.getElementById('logo');
+const logoPreview = document.getElementById('logoPreview');
+const clearLogo = document.getElementById('clearLogo');
+const bgTransparent = document.getElementById('backgroundTransparent');
+const infoSize = document.getElementById('infoSize');
+const infoMargin = document.getElementById('infoMargin');
+
+let logoDataUrl = null;
+
+// 기본 QR 객체 생성
+let qr = new QRCodeStyling({
+  width: parseInt(sizeInput.value),
+  height: parseInt(sizeInput.value),
+  margin: parseInt(marginInput.value),
+  data: textInput.value,
+  image: null,
+  dotsOptions: {
+    color: dotColorInput.value,
+    type: "square"
+  },
+  cornersSquareOptions: {
+    color: dotColorInput.value,
+    type: "square"
+  },
+  cornersDotOptions: {
+    color: dotColorInput.value,
+    type: "square"
+  },
+  backgroundOptions: {
+    color: bgColorInput.value,
+  }
+});
+
+// 초기 렌더
+qr.append(document.getElementById('qr-wrap'));
+
+// helper
+function updateInfo(){
+  infoSize.textContent = sizeInput.value;
+  infoMargin.textContent = marginInput.value;
+}
+
+function applyOptions(){
+  const data = textInput.value || "";
+  const size = parseInt(sizeInput.value) || 400;
+  const margin = parseInt(marginInput.value) || 10;
+  const dotStyle = dotStyleInput.value;
+  const eyeStyle = eyeStyleInput.value;
+  const dotColor = dotColorInput.value;
+  const bgColor = bgColorInput.value;
+  const transparent = bgTransparent.value === "true";
+
+  // dotsOptions type mapping: library types include "rounded", "dots", "classy", "classy-rounded", "square"
+  let dotsType = "square";
+  if(dotStyle === "dots") dotsType = "dots";
+  else if(dotStyle === "rounded") dotsType = "rounded";
+  else dotsType = "square";
+
+  // eye styles mapping: use cornersSquareOptions and cornersDotOptions types
+  let cornersSquareType = "square";
+  let cornersDotType = "square";
+  if(eyeStyle === "circle"){
+    cornersSquareType = "square";
+    cornersDotType = "dot"; // some libs support 'dot' type; if not, will fallback visually
+  } else if(eyeStyle === "rounded"){
+    cornersSquareType = "rounded";
+    cornersDotType = "rounded";
+  } else {
+    cornersSquareType = "square";
+    cornersDotType = "square";
+  }
+
+  // update config
+  qr.update({
+    width: size,
+    height: size,
+    margin: margin,
+    data: data,
+    dotsOptions: {
+      color: dotColor,
+      type: dotsType
+    },
+    cornersSquareOptions: {
+      color: dotColor,
+      type: cornersSquareType
+    },
+    cornersDotOptions: {
+      color: dotColor,
+      type: cornersDotType
+    },
+    backgroundOptions: {
+      color: transparent ? "transparent" : bgColor
+    },
+    image: logoDataUrl // null or dataURL
+  });
+
+  updateInfo();
+}
+
+// 실시간 반영(간단)
+[textInput, sizeInput, marginInput, dotStyleInput, eyeStyleInput, dotColorInput, bgColorInput, bgTransparent].forEach(el=>{
+  el.addEventListener('input', ()=> {
+    applyOptions();
+  });
+});
+
+// 생성 버튼 (강제적 재생성)
+generateBtn.addEventListener('click', ()=> applyOptions());
+
+// 로고 업로드
+logoInput.addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    logoDataUrl = ev.target.result;
+    logoPreview.src = logoDataUrl;
+    logoPreview.style.display = 'block';
+    applyOptions();
+  }
+  reader.readAsDataURL(f);
+});
+
+// 로고 삭제
+clearLogo.addEventListener('click', ()=>{
+  logoDataUrl = null;
+  logoInput.value = "";
+  logoPreview.src = "";
+  logoPreview.style.display = 'none';
+  applyOptions();
+});
+
+// 다운로드 PNG
+downloadPNG.addEventListener('click', async ()=>{
+  // library provides getDataUrl and download
+  try{
+    await qr.update({image: logoDataUrl});
+    qr.download({extension:"png"});
+  }catch(e){
+    // fallback: create a dataURL and open
+    const url = await qr.getRawData("png");
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'qr.png';
+    a.click();
+  }
+});
+
+// 다운로드 SVG
+downloadSVG.addEventListener('click', async ()=>{
+  try{
+    await qr.update({image: logoDataUrl});
+    qr.download({extension:"svg"});
+  }catch(e){
+    const svg = await qr.getRawData("svg");
+    const blob = new Blob([svg], {type:"image/svg+xml"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'qr.svg';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+});
+
+// 복사 (텍스트 데이터 복사)
+copyDataBtn.addEventListener('click', async ()=>{
+  const txt = textInput.value || "";
+  try{
+    await navigator.clipboard.writeText(txt);
+    copyDataBtn.textContent = "복사됨!";
+    setTimeout(()=> copyDataBtn.textContent = "데이터 복사", 1200);
+  }catch(e){
+    alert("클립보드 복사 실패 — 수동 복사 필요");
+  }
+});
+
+// 초기 렌더 정보
+updateInfo();
+applyOptions();
+
+</script>
+</body>
+</html>
